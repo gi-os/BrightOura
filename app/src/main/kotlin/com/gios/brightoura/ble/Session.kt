@@ -50,6 +50,7 @@ class Session(private val context: Context, private val vault: Vault) {
             // ring that answers `needs auth` has been keyed by something — Oura's app, or us.
             val battery = ring.ask(Protocol.battery())
             Probe(
+                link = ring.capabilitiesLine(),
                 firmware = firmware?.let { text(it.payload) },
                 serial = serial?.let { text(it.payload) },
                 hardware = hardware?.let { text(it.payload) },
@@ -197,6 +198,14 @@ class Session(private val context: Context, private val vault: Vault) {
 
     /** What an unauthenticated look at a ring can tell. */
     data class Probe(
+        /**
+         * What the link itself managed: the characteristics' properties, and whether the push
+         * channel was available.
+         *
+         * First field because it is the first question now. On a phone that cannot complete a BLE
+         * bond, "not subscribed" is the whole story and every empty field below follows from it.
+         */
+        val link: String,
         val firmware: String?,
         val serial: String?,
         val hardware: String?,

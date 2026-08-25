@@ -14,6 +14,7 @@ import android.bluetooth.le.ScanFilter
 import android.bluetooth.le.ScanResult
 import android.bluetooth.le.ScanSettings
 import android.content.Context
+import com.gios.brightoura.data.Trace
 import android.os.Build
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.withTimeoutOrNull
@@ -47,13 +48,70 @@ import java.util.concurrent.atomic.AtomicBoolean
 class Ring private constructor(
     private val gatt: BluetoothGatt,
     private val write: BluetoothGattCharacteristic,
+    private val notify: BluetoothGattCharacteristic,
     private val frames: Channel<ByteArray>,
+    /**
+     * Whether the notify subscription actually took.
+     *
+     * False is not fatal any more. Subscribing is the first thing on this link that needs
+     * encryption, so on a phone that cannot complete a BLE bond it is the first thing to fail —
+     * and a ring that will not push frames may still hand them over when *asked*. See [ask].
+     */
+    private val subscribed: Boolean,
 ) {
 
-    /** Send a request and wait for the next frame. Null on silence. */
+    /**
+     * Send a request and wait for the next frame. Null on silence.
+     *
+     * Two ways of hearing the answer, and the second one exists because of this phone. Normally the
+     * ring pushes it: subscribe once, and replies arrive as notifications. If the subscription was
+     * refused — which is what an unbondable link looks like — the same characteristic is *read*
+     * instead, a few times, a beat apart. Polling is worse in every way except the one that
+     * matters: it needs no encrypted link.
+     */
     suspend fun ask(request: ByteArray, timeoutMs: Long = REPLY_MS): Protocol.Packet? {
         send(request)
-        return next(timeoutMs)
+        if (subscribed) return next(timeoutMs)
+        return poll(timeoutMs)
+    }
+
+    /**
+     * Ask the notify characteristic for its current value, repeatedly, until something arrives.
+     *
+     * A reply that has already been delivered as a notification cannot be read back, so this is
+     * only ever the fallback path — but a ring that answers a request by *setting* the value rather
+     * than only pushing it will answer here. Whether this ring does is exactly what the probe is
+     * for, and it is not knowable from the outside.
+     */
+    @SuppressLint("MissingPermission")
+    private suspend fun poll(timeoutMs: Long): Protocol.Packet? {
+        val deadline = System.currentTimeMillis() + timeoutMs
+        while (System.currentTimeMillis() < deadline) {
+            if (!gatt.readCharacteristic(notify)) return null
+            next(POLL_STEP_MS)?.let { return it }
+        }
+        return null
+    }
+
+    /** What the two characteristics say they can do, for the screen that has to explain a failure. */
+    fun capabilitiesLine(): String = buildString {
+        append("write ")
+        append(properties(write))
+        append(" · notify ")
+        append(properties(notify))
+        append(if (subscribed) " · subscribed" else " · NOT subscribed")
+    }
+
+    private fun properties(characteristic: BluetoothGattCharacteristic): String {
+        val flags = characteristic.properties
+        val names = buildList {
+            if (flags and BluetoothGattCharacteristic.PROPERTY_READ != 0) add("read")
+            if (flags and BluetoothGattCharacteristic.PROPERTY_WRITE != 0) add("write")
+            if (flags and BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE != 0) add("write-nr")
+            if (flags and BluetoothGattCharacteristic.PROPERTY_NOTIFY != 0) add("notify")
+            if (flags and BluetoothGattCharacteristic.PROPERTY_INDICATE != 0) add("indicate")
+        }
+        return if (names.isEmpty()) "none" else names.joinToString("/")
     }
 
     /** Send without waiting — for the second half of a stream that answers many frames. */
@@ -247,6 +305,7 @@ class Ring private constructor(
             val opened = AtomicBoolean(false)
             /** Set when a GATT status says the link is not encrypted enough. See below. */
             val needsBond = AtomicBoolean(false)
+            val subscribed = AtomicBoolean(false)
             var connection: BluetoothGatt? = null
 
             val callback = object : BluetoothGattCallback() {
@@ -319,8 +378,13 @@ class Ring private constructor(
                     // where a missing bond announces itself — as a status code, not a prompt.
                     if (isEncryptionStatus(status)) needsBond.set(true)
                     if (status != BluetoothGatt.GATT_SUCCESS) onProgress(describe(status))
+                    subscribed.set(status == BluetoothGatt.GATT_SUCCESS)
                     if (opened.compareAndSet(false, true)) {
-                        ready.trySend(status == BluetoothGatt.GATT_SUCCESS)
+                        // Open either way. A refused subscription means the push channel is
+                        // unavailable, not that the ring is unreachable — [ask] falls back to
+                        // reading, and a probe that gets one frame out of a phone that cannot bond
+                        // is worth more than a clean failure.
+                        ready.trySend(true)
                     }
                 }
 
@@ -341,6 +405,30 @@ class Ring private constructor(
                     value: ByteArray,
                 ) {
                     frames.trySend(value.copyOf())
+                }
+
+                @Deprecated("Kept for API 32 and below.")
+                @Suppress("DEPRECATION")
+                override fun onCharacteristicRead(
+                    g: BluetoothGatt,
+                    characteristic: BluetoothGattCharacteristic,
+                    status: Int,
+                ) {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) return
+                    if (isEncryptionStatus(status)) needsBond.set(true)
+                    characteristic.value?.takeIf { it.isNotEmpty() }?.let { frames.trySend(it.copyOf()) }
+                }
+
+                // A read answers here, and it is fed into the same channel a notification would
+                // have used — so everything above [ask] is indifferent to which way the frame came.
+                override fun onCharacteristicRead(
+                    g: BluetoothGatt,
+                    characteristic: BluetoothGattCharacteristic,
+                    value: ByteArray,
+                    status: Int,
+                ) {
+                    if (isEncryptionStatus(status)) needsBond.set(true)
+                    if (value.isNotEmpty()) frames.trySend(value.copyOf())
                 }
             }
 
@@ -378,7 +466,16 @@ class Ring private constructor(
                 runCatching { g.close() }
                 return null
             }
-            return Ring(g, writeChar, frames)
+            val notifyChar = g.getService(Protocol.SERVICE)?.getCharacteristic(Protocol.NOTIFY)
+            if (notifyChar == null) {
+                runCatching { g.disconnect() }
+                runCatching { g.close() }
+                return null
+            }
+            val ring = Ring(g, writeChar, notifyChar, frames, subscribed.get())
+            onProgress(ring.capabilitiesLine())
+            Trace.add(ring.capabilitiesLine())
+            return ring
         }
 
         /**
@@ -520,6 +617,9 @@ class Ring private constructor(
 
         /** How long the system pairing prompt is waited on. A person has to find it first. */
         private const val BOND_MS = 60_000L
+
+        /** How long one poll of the notify characteristic waits before asking again. */
+        private const val POLL_STEP_MS = 400L
     }
 
     /** A ring the scan saw. */

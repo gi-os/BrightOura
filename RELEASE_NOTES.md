@@ -1,3 +1,36 @@
+## BrightOura v0.9 — asking instead of being told
+
+**"Pairing, pairing, pairing, then nothing" from the phone's own Bluetooth screen is the real
+finding.** The ring is in pairing mode — blue on the charger — the phone starts a bond, and the bond
+never completes. That is not a missing dialog any more; that is the bond itself failing.
+
+And the diagnosis has the corroborating detail: the two devices this phone *has* bonded are
+headphones and a speaker. Both classic Bluetooth. **There is no evidence a BLE bond has ever
+succeeded on this phone**, which points at the platform rather than at the ring.
+
+**So this release stops needing one.** Subscribing to notifications is the first thing on the link
+that requires encryption, which is why it is the first thing that fails — and a refused subscription
+is no longer treated as a dead connection. Instead:
+
+- The connection stays open.
+- Requests are still written the same way.
+- The reply is **read** from the notify characteristic rather than waited for, a few times, a beat
+  apart, until something arrives.
+
+Polling is worse than being pushed to in every respect except the one that matters here: it needs no
+encrypted link. Whether *this* ring answers a read — some devices set the value, some only push it —
+is not knowable from outside, and is exactly what a probe will now say.
+
+**The probe leads with what the link managed.** A new first row: the properties both characteristics
+declare (`read/write/notify`) and whether the push channel was available at all. On a phone that
+cannot bond, "NOT subscribed" is the whole story and every empty field under it follows from that one
+fact — which is a better thing to read than four dashes and no reason.
+
+**What this does not do is pretend.** If the ring only ever pushes its replies, this will find
+nothing and say so, and the answer is that a factory-reset Oura ring cannot be read by an app on a
+phone whose BLE bonding is broken. That is worth knowing precisely rather than approximately, and it
+would be a fault to report to Light rather than something to code around.
+
 ## BrightOura v0.8 — what the diagnosis said, and what is left
 
 **The trail from a real attempt settles most of this.** The connection works: MTU raised, services

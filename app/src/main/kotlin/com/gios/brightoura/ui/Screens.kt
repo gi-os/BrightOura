@@ -280,6 +280,11 @@ fun SetupScreen(vm: RingViewModel, onDone: () -> Unit) {
         probe?.let { p ->
             item {
                 SectionLabel("WHAT IT SAID")
+                MenuRow(
+                    label = "The link",
+                    sub = p.link,
+                    detail = if (p.link.contains("NOT subscribed")) "NO PUSH" else "OK",
+                )
                 MenuRow(label = "Serial", detail = p.serial ?: "—")
                 MenuRow(label = "Hardware", detail = p.hardware ?: "—")
                 MenuRow(label = "Firmware", detail = p.firmware ?: "—")
