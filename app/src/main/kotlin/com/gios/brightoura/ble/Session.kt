@@ -33,13 +33,16 @@ class Session(private val context: Context, private val vault: Vault) {
         // over a minute ago can already be stale — and a connect to a stale address fails with
         // status 133, which reads as "the ring is not there". Looking again costs ten seconds and
         // turns the commonest failure on this phone into a retry nobody has to understand.
-        val ring = Ring.connect(context, address, step) ?: run {
+        // Plain link first — see [Ring.connect]. Subscribing is what asks for a bond, and on a
+        // phone that cannot finish one it stalls the whole connection without asking the ring a
+        // single question.
+        val ring = Ring.connect(context, address, step, subscribe = false) ?: run {
             step("Looking for it again — the ring's address rotates")
             val again = Ring.scan(context, timeoutMs = 6_000L, onProgress = step)
                 .rings
                 .firstOrNull()
                 ?: return null
-            Ring.connect(context, again.address, step)
+            Ring.connect(context, again.address, step, subscribe = false)
         } ?: return null
         step("Reading what it will say")
         return try {

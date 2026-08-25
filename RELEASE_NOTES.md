@@ -1,3 +1,27 @@
+## BrightOura v0.10 — it was my own fallback that closed the app
+
+**"It closed the app" was this app leaving.** v0.8 opened a Bluetooth screen automatically when a
+pairing request could not be shown, on the reasoning that the request expires in under a minute and
+there is no time to explain. What it actually did was switch away from BrightOura *in the middle of
+its own connection* — which reads as the app closing itself, kills the GATT conversation it was in,
+and leaves the ring half-paired. A fallback that destroys the thing it was helping is not a fallback.
+It is a button on the setup screen now, and only that.
+
+**And the trail shows why the probe never got anywhere.** Connected in 749ms, discovered services at
+1646ms, subscribed at 1662ms — and the pairing request arrives 800ms later. That is not a
+coincidence: **the descriptor write that subscribes is what asks for the bond.** The bond cannot
+complete on this phone, so the callback for that write never comes, so the connection sits there
+until it times out twenty seconds later having asked the ring nothing at all.
+
+**So it does not subscribe any more.** The link is plain and unencrypted; requests are written the
+same way; replies are read from the notify characteristic rather than pushed. That is the opposite of
+how BLE is normally written and it is the right way round on a phone whose BLE bonding does not work:
+nothing in that path needs encryption, so nothing in it can be blocked by a bond that will not
+finish.
+
+Whether the ring answers a read is the one thing left that nobody can know from outside. The probe
+will now find out in about two seconds instead of timing out.
+
 ## BrightOura v0.9 — asking instead of being told
 
 **"Pairing, pairing, pairing, then nothing" from the phone's own Bluetooth screen is the real

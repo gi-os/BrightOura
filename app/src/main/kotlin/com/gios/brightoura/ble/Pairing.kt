@@ -81,19 +81,19 @@ object Pairing {
                 // Could not answer it. Everything left is an attempt to put *something* on screen
                 // that can, in falling order of likelihood on this phone.
                 if (show(context, device, variant, onProgress)) return
-                // Last resort, and the one that has actually worked on this phone for headphones:
-                // Light's own Bluetooth screen. Opened without being asked, because the request
-                // expires in under a minute and a user reading an explanation is a user who has
-                // already missed it.
-                Trace.add("falling back to a Bluetooth screen")
-                if (openSettings(context, onProgress)) {
-                    onProgress("Opened a Bluetooth screen — pair the ring there, now")
-                } else {
-                    onProgress(
-                        "Nothing on this phone will show a pairing request. The ring cannot be " +
-                            "bonded from here.",
-                    )
-                }
+                // **And that is where this stops.**
+                //
+                // v0.8 opened a Bluetooth screen from here, on the reasoning that the request
+                // expires in under a minute and there is no time to explain. What that actually did
+                // was switch away from this app *in the middle of its own connection* — which reads
+                // as the app closing itself, kills the GATT conversation it was in, and leaves the
+                // ring mid-pair. A fallback that destroys the thing it was helping is not a
+                // fallback.
+                //
+                // The Bluetooth screen is a button on the setup screen. Pressed deliberately,
+                // between attempts, it is useful; fired automatically, during one, it is sabotage.
+                Trace.add("no screen will show the request; leaving the connection alone")
+                onProgress("Nothing here will show the request — pair from the Bluetooth screen")
             }
         }
         val filter = IntentFilter(BluetoothDevice.ACTION_PAIRING_REQUEST)

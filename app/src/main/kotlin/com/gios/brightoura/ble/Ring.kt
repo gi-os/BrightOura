@@ -270,6 +270,19 @@ class Ring private constructor(
             context: Context,
             address: String,
             onProgress: (String) -> Unit = {},
+            /**
+             * Whether to subscribe for notifications.
+             *
+             * **Off by default, which is the opposite of how BLE is normally written**, and the
+             * reason is in the trail from this phone: the descriptor write that subscribes is what
+             * triggers the bond, the bond never completes here, and the callback for that write
+             * therefore never arrives — so the whole connection stalls until it times out, twenty
+             * seconds later, having asked the ring nothing at all.
+             *
+             * Without it the link is plain and unencrypted, requests still go out, and replies are
+             * read rather than pushed. Slower, and it works on a phone that cannot bond.
+             */
+            subscribe: Boolean = false,
         ): Ring? {
             val adapter = adapter(context) ?: return null
             val device: BluetoothDevice = runCatching { adapter.getRemoteDevice(address) }
@@ -341,6 +354,13 @@ class Ring private constructor(
                 override fun onServicesDiscovered(g: BluetoothGatt, status: Int) {
                     val service = g.getService(Protocol.SERVICE)
                     val notify = service?.getCharacteristic(Protocol.NOTIFY)
+                    if (!subscribe && service != null && notify != null) {
+                        // Straight through. Nothing here needs an encrypted link, so nothing here
+                        // can be blocked by a bond that will not finish.
+                        onProgress("Ready (reading replies rather than subscribing)")
+                        if (opened.compareAndSet(false, true)) ready.trySend(true)
+                        return
+                    }
                     if (notify == null) {
                         onProgress(
                             if (service == null) {
