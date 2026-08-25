@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- Shake-to-report posts the issue to GitHub. Nothing else here is online: the ring is read
+         over Bluetooth and the data never leaves the phone. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <!--
+      Talking to the ring. On Android 12 and up these two are the whole of it, and
+      `neverForLocation` is the honest declaration: this app scans for one service UUID belonging
+      to a ring on the user's own finger, and has no interest in where that is.
+    -->
+    <uses-permission android:name="android.permission.BLUETOOTH_SCAN"
+        android:usesPermissionFlags="neverForLocation" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+
+    <!--
+      Android 11 and below have no scan permission of their own: a BLE scan is a location signal
+      as far as that platform is concerned, so the location permission is what a scan needs there.
+      Capped with maxSdkVersion so a modern phone is never asked for a location this app cannot use.
+    -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"
+        android:maxSdkVersion="30" />
+
+    <uses-feature android:name="android.hardware.bluetooth_le" android:required="true" />
+
+    <application
+        android:allowBackup="true"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:label="@string/app_name"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.BrightOura">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:icon="@mipmap/ic_launcher"
+            android:label="@string/app_name"
+            android:theme="@style/Theme.BrightOura">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+
+        </activity>
+
+    </application>
+</manifest>
