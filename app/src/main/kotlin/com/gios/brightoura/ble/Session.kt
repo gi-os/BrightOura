@@ -179,6 +179,22 @@ class Session(private val context: Context, private val vault: Vault) {
     private fun text(payload: ByteArray): String =
         payload.filter { it >= 0x20 && it < 0x7f }.toByteArray().decodeToString().trim()
 
+    /**
+     * Whether the ring's advertised name says it has never been keyed.
+     *
+     * A ring straight out of a reset advertises `Oura <serial>`; once an app has installed a key it
+     * renames itself to `Oura Ring Gen3` or similar. So the name is a free read of the one fact
+     * that decides the whole setup — and it explains the encryption: a factory-reset ring insists
+     * on a bonded link before it will carry a conversation.
+     */
+    fun looksUnkeyed(name: String?): Boolean {
+        val text = name?.trim().orEmpty()
+        if (!text.startsWith("Oura", ignoreCase = true)) return false
+        val tail = text.removePrefix("Oura").trim()
+        // A serial is a long run of digits and capitals with no spaces. "Ring Gen3" is not.
+        return tail.length >= 8 && tail.none { it == ' ' }
+    }
+
     /** What an unauthenticated look at a ring can tell. */
     data class Probe(
         val firmware: String?,

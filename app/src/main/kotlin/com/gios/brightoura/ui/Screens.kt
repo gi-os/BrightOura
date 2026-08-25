@@ -263,6 +263,10 @@ fun SetupScreen(vm: RingViewModel, onDone: () -> Unit) {
                     label = ring.name,
                     sub = buildString {
                         append(if (ring.bonded) "Paired · " else "Not paired · ")
+                        // The name is a free read of the one fact that decides everything: a ring
+                        // still calling itself after its serial has never been keyed, which is why
+                        // it insists on a bonded link.
+                        if (vm.looksUnkeyed(ring.name)) append("never keyed · ")
                         append(ring.address)
                         if (ring.rssi != 0) append(" · ${ring.rssi} dBm")
                     },

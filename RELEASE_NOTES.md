@@ -1,3 +1,33 @@
+## BrightOura v0.8 — what the diagnosis said, and what is left
+
+**The trail from a real attempt settles most of this.** The connection works: MTU raised, services
+discovered, subscribing — and then a pairing request of **variant 3**, which is the plainest kind
+there is: a yes or no, nothing to type. Confirming it in-process needs `BLUETOOTH_PRIVILEGED`, which
+is signature-level and cannot be granted over adb, so that attempt throws. Raising the Settings
+dialog was refused too. The bond is not failing on anything cryptographic — it is failing because
+**a yes has nowhere to be said on this phone**.
+
+**And the ring has never been keyed.** It advertises `Oura 20160C…`, its own serial. A ring that has
+been through an app's onboarding renames itself; one straight out of a reset does not. That is also
+*why* it insists on an encrypted link before it will talk — a reset ring does, and a keyed one is
+happy without. The row says so now: **never keyed**.
+
+**Two of the numbers in that trail are worth keeping.** The first connect took the address the scan
+handed over twenty seconds earlier and got nothing at all — the ring's address rotates, the retry
+re-scanned and connected in two seconds. And the pairing variant is now spelled out in words
+alongside the number, because 3 versus 0 is the difference between "there is nowhere to say yes" and
+"there is nowhere to type a PIN", and those are not the same problem.
+
+**When a request cannot be confirmed, the app now goes looking for a screen by itself** rather than
+explaining and waiting: the pairing dialog with no package named — so any handler this build
+registers gets a chance, not only Settings — and then Light's own Bluetooth screen, opened without
+being asked. The request expires in under a minute; a user reading an explanation has already missed
+it.
+
+**What the two bonded devices in that diagnosis prove:** headphones and a JBL speaker, both bonded,
+both fine. Pairing works on this phone when it is *started from Light's own Bluetooth screen*. What
+does not work is a BLE bond started by an app, whose consent lands in a notification nothing draws.
+
 ## BrightOura v0.7 — around the crashing Settings app
 
 **The system settings app crashes on its pairing screen, so this stops sending you there.** That is

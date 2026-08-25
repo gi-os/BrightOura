@@ -326,6 +326,9 @@ class RingViewModel(app: Application) : AndroidViewModel(app) {
         say("Key forgotten. The ring keeps it until it is reset again.")
     }
 
+    /** Whether a ring's advertised name says it has never been keyed. See [Session.looksUnkeyed]. */
+    fun looksUnkeyed(name: String?): Boolean = session.looksUnkeyed(name)
+
     /** How many failure reports are waiting, and whether this build can send them at all. */
     fun queuedReports(): Int = Failures.queued(getApplication())
 

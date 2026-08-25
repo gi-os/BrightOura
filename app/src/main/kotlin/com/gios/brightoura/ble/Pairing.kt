@@ -60,8 +60,8 @@ object Pairing {
                 val device = @Suppress("DEPRECATION")
                 intent.getParcelableExtra<BluetoothDevice>(BluetoothDevice.EXTRA_DEVICE)
                 val variant = intent.getIntExtra(BluetoothDevice.EXTRA_PAIRING_VARIANT, -1)
-                Trace.add("pairing request, variant $variant")
-                onProgress("The phone is asking to pair (type $variant)")
+                Trace.add("pairing request, variant $variant (${variantName(variant)})")
+                onProgress("The phone is asking to pair — ${variantName(variant)}")
                 if (device == null) return
                 // Just Works and consent-style variants are the ones a listener can answer.
                 val answered = runCatching { device.setPairingConfirmation(true) }
@@ -78,9 +78,22 @@ object Pairing {
                     onProgress("Accepted it for you")
                     return
                 }
-                // Could not answer it. Put the dialog on screen instead, which is what the
-                // notification was for.
-                show(context, device, variant, onProgress)
+                // Could not answer it. Everything left is an attempt to put *something* on screen
+                // that can, in falling order of likelihood on this phone.
+                if (show(context, device, variant, onProgress)) return
+                // Last resort, and the one that has actually worked on this phone for headphones:
+                // Light's own Bluetooth screen. Opened without being asked, because the request
+                // expires in under a minute and a user reading an explanation is a user who has
+                // already missed it.
+                Trace.add("falling back to a Bluetooth screen")
+                if (openSettings(context, onProgress)) {
+                    onProgress("Opened a Bluetooth screen — pair the ring there, now")
+                } else {
+                    onProgress(
+                        "Nothing on this phone will show a pairing request. The ring cannot be " +
+                            "bonded from here.",
+                    )
+                }
             }
         }
         val filter = IntentFilter(BluetoothDevice.ACTION_PAIRING_REQUEST)
@@ -113,6 +126,9 @@ object Pairing {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
         val attempts = listOf(
+            // Unpackaged first: whatever *this* build registers as the pairing handler gets it,
+            // which on a phone with its own launcher-side Bluetooth UI may not be Settings at all.
+            Intent(extras),
             Intent(extras).setPackage(SETTINGS),
             Intent(extras).setClassName(SETTINGS, DIALOG),
         )
@@ -199,6 +215,25 @@ object Pairing {
             ?.firstOrNull { it.contains("bluetooth", ignoreCase = true) }
             ?.let { android.content.ComponentName(LIGHTOS, it) }
     }.getOrNull()
+
+    /**
+     * What a pairing variant means, because the number decides whether this is solvable.
+     *
+     * `3` is consent — a plain yes/no with nothing to type, which is the "Just Works" case. It is
+     * the *easiest* pairing there is and the one this phone cannot complete, because a yes needs a
+     * dialog and confirming it in-process needs `BLUETOOTH_PRIVILEGED`. A PIN variant would at
+     * least have somewhere to type.
+     */
+    private fun variantName(variant: Int): String = when (variant) {
+        0 -> "a PIN to type"
+        1 -> "a passkey to type"
+        2 -> "a passkey to confirm"
+        3 -> "just a yes or no"
+        4 -> "a yes or no"
+        5 -> "a display passkey"
+        6 -> "a PIN with 16 digits"
+        else -> "type $variant"
+    }
 
     private const val SETTINGS = "com.android.settings"
     private const val LIGHTOS = "com.lightos"
