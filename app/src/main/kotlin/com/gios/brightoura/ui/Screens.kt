@@ -238,6 +238,14 @@ fun SetupScreen(vm: RingViewModel, onDone: () -> Unit) {
             item { SectionLabel("STEP TWO · LOOK AT IT") }
             items(found) { ring ->
                 MenuRow(
+                    label = "Bluetooth settings",
+                    detail = "OPEN",
+                    sub = "Pair the ring there once. A bond made in the system's own screen is " +
+                        "one this app never has to ask for again — and on this phone the pairing " +
+                        "request chimes without ever appearing.",
+                    onClick = { vm.openBluetoothSettings() },
+                )
+                MenuRow(
                     label = "Pair with ${ring.name}",
                     sub = "Only needed if a probe says the link wants encryption. Most rings " +
                         "pair silently, with no prompt at all.",

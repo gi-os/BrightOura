@@ -404,6 +404,10 @@ class Ring private constructor(
                     context.registerReceiver(receiver, filter)
                 }
             }
+            // Watch for the request while this bond is in flight. On this phone the system's own
+            // notification is never rendered — see [Pairing] — so something has to either answer it
+            // or put it on screen, and both of those live there.
+            val watcher = Pairing.watch(context, onProgress)
             return try {
                 val asked = runCatching { device.createBond() }.getOrDefault(false)
                 if (!asked) {
@@ -420,6 +424,7 @@ class Ring private constructor(
                 if (!bonded) onProgress("Pairing did not finish in a minute")
                 bonded
             } finally {
+                runCatching { watcher.close() }
                 runCatching { context.unregisterReceiver(receiver) }
             }
         }

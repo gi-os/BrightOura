@@ -233,6 +233,23 @@ class RingViewModel(app: Application) : AndroidViewModel(app) {
         if (!ok) fail("pair the Bluetooth link", "createBond did not reach BONDED")
     }
 
+    /**
+     * Open the phone's Bluetooth settings.
+     *
+     * The reliable way to make a bond on a phone whose pairing notification is never drawn — and it
+     * only has to be done once, because the bond outlives it.
+     */
+    fun openBluetoothSettings() {
+        val ok = com.gios.brightoura.ble.Pairing.openSettings(getApplication())
+        say(
+            if (ok) {
+                "Pair the ring there, then come back and probe it."
+            } else {
+                "This phone has no Bluetooth settings screen to open."
+            },
+        )
+    }
+
     fun forget() {
         vault.forget()
         vault.address = null

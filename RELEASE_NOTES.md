@@ -1,3 +1,33 @@
+## BrightOura v0.4 — the chime with no dialog
+
+**"I hear a notification but nothing appears on screen" is the whole bug, and it is not ours.**
+Android's pairing request is a *notification with a full-screen intent*: the system posts it and
+expects the launcher to raise the dialog behind it. LightOS does not. So the phone chimes, the
+request sits in a shade that cannot be opened, the window expires, and the bond fails with every
+layer working as designed and nothing on screen to accept.
+
+Three ways at it now, in order of how well they work:
+
+**1. Answer it ourselves.** The request is broadcast, and for the "Just Works" variants a listener
+can confirm it directly. On modern Android that call wants `BLUETOOTH_PRIVILEGED`, which is
+signature-level and cannot be granted over adb — so it usually throws, and the throw is *reported*
+rather than swallowed. Sometimes it works, and it is the only path that needs no screen at all.
+
+**2. Raise the dialog ourselves.** The dialog is an ordinary activity in the Settings package.
+Started directly, with the device and the pairing variant, it appears — which is exactly what the
+notification was supposed to do. Two attempts, action-with-package then component-by-name, because
+which one a build accepts is not something to guess from out here.
+
+**3. Bluetooth settings, once.** A bond made in the system's own screen is a bond this app never has
+to ask for again. There is a row for it on the setup screen, and it says why: on this phone the
+pairing request chimes without appearing.
+
+If all three are refused, the app now says the honest thing — this ring wants a bond and this phone
+will not make one — instead of timing out with a shrug.
+
+Worth remembering from v0.3: **most rings need no bond at all.** Probe first. The bond path only
+matters for a factory-reset ring that demands an encrypted link, and the probe will say so.
+
 ## BrightOura v0.3 — the prompt was never coming, and that was the bug
 
 **"No pairing prompt ever appears" is not a symptom, it is the normal case.** Most BLE bonds are
