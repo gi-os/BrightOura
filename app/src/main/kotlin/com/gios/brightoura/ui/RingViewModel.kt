@@ -3,6 +3,7 @@ package com.gios.brightoura.ui
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.gios.brightoura.ble.Companions
 import com.gios.brightoura.ble.Ring
 import com.gios.brightoura.ble.Session
 import com.gios.brightoura.ble.Sync
@@ -231,6 +232,42 @@ class RingViewModel(app: Application) : AndroidViewModel(app) {
             },
         )
         if (!ok) fail("pair the Bluetooth link", "createBond did not reach BONDED")
+    }
+
+    /**
+     * The system's own device picker, when it is ready to be shown.
+     *
+     * Held here rather than launched here: an `IntentSender` has to be started from an activity,
+     * and the activity is watching this.
+     */
+    private val _picker = MutableStateFlow<android.content.IntentSender?>(null)
+    val picker: StateFlow<android.content.IntentSender?> = _picker.asStateFlow()
+
+    fun pickerShown() { _picker.value = null }
+
+    /**
+     * Ask the system to pair the ring for us.
+     *
+     * The path that works on a phone which never draws the pairing notification: the companion
+     * flow's picker is an activity this app launches, and the watch profile hands the pairing to
+     * the platform. See [com.gios.brightoura.ble.Companions].
+     */
+    fun pairViaSystem() {
+        Trace.begin("companion pairing")
+        _stage.value = "Asking the phone to find the ring"
+        Companions.request(
+            context = getApplication(),
+            onProgress = { step(it) },
+            onPicker = { sender ->
+                _picker.value = sender
+                say("Pick the ring in the phone's own dialog.")
+            },
+            onFailure = { reason ->
+                say("The phone would not run its own picker: $reason")
+                _stage.value = null
+                viewModelScope.launch { fail("pair through the companion flow", reason) }
+            },
+        )
     }
 
     /**

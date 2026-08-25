@@ -22,6 +22,16 @@
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"
         android:maxSdkVersion="30" />
 
+    <!--
+      The companion-device flow, which is the only pairing dialog this phone will draw: the app
+      asks, the *system* runs the picker, and the picker comes back as an IntentSender the app
+      launches — an activity rather than a notification. The watch profile is what makes the
+      platform take on the pairing itself. Both are ordinary permissions; the dialog is the consent.
+      See ble/Companion.kt.
+    -->
+    <uses-permission android:name="android.permission.REQUEST_COMPANION_PROFILE_WATCH" />
+    <uses-feature android:name="android.software.companion_device_setup" android:required="false" />
+
     <uses-feature android:name="android.hardware.bluetooth_le" android:required="true" />
 
     <application

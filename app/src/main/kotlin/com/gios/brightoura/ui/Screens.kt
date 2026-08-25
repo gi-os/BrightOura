@@ -238,6 +238,13 @@ fun SetupScreen(vm: RingViewModel, onDone: () -> Unit) {
             item { SectionLabel("STEP TWO · LOOK AT IT") }
             items(found) { ring ->
                 MenuRow(
+                    label = "Let the phone pair it",
+                    detail = if (busy) "…" else "SYSTEM",
+                    sub = "Runs the phone's own device picker — an actual dialog, not a " +
+                        "notification, so it appears on this phone. The system does the pairing.",
+                    onClick = { vm.pairViaSystem() },
+                )
+                MenuRow(
                     label = "Bluetooth settings",
                     detail = "OPEN",
                     sub = "Pair the ring there once. A bond made in the system's own screen is " +

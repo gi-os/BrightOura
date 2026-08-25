@@ -15,6 +15,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -119,6 +120,28 @@ class MainActivity : ComponentActivity() {
                 checkSelfPermission(it) != android.content.pm.PackageManager.PERMISSION_GRANTED
             }
             if (missing) ask.launch(wanted)
+        }
+
+        // The companion picker is an `IntentSender`, which only an activity can start — and it is
+        // the one pairing dialog this phone will actually draw. See ble/Companion.kt.
+        val picker by vm.picker.collectAsStateWithLifecycle()
+        val launchPicker = rememberLauncherForActivityResult(
+            ActivityResultContracts.StartIntentSenderForResult(),
+        ) { result ->
+            vm.say(
+                if (result.resultCode == RESULT_OK) {
+                    "The phone associated the ring. Probe it now."
+                } else {
+                    "The picker was closed without choosing anything."
+                },
+            )
+        }
+        LaunchedEffect(picker) {
+            val sender = picker ?: return@LaunchedEffect
+            vm.pickerShown()
+            runCatching {
+                launchPicker.launch(androidx.activity.result.IntentSenderRequest.Builder(sender).build())
+            }.onFailure { vm.say("The phone would not open its own picker.") }
         }
 
         CompositionLocalProvider(LocalWheelBus provides wheel) {

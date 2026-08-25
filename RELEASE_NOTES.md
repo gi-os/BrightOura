@@ -1,3 +1,26 @@
+## BrightOura v0.5 — let the phone do the pairing
+
+**The probe is what triggers the chime, which tells us the ring does want a bonded link.** So the
+pairing cannot be avoided — it has to be *completed*, on a phone that never draws the request.
+
+**The companion-device flow is the one dialog this phone will draw.** It is a different shape from
+an ordinary pairing request: the app asks, the **system** runs a device picker, and the picker comes
+back as an `IntentSender` the app launches itself — an activity, not a notification. So it appears
+on a phone that renders no notifications at all. And with the watch profile, the platform takes on
+the pairing as part of associating, which is precisely the step that has been failing.
+
+**Setup → Let the phone pair it.** One system dialog, in the system's own words, listing what it is
+being asked for. The association is remembered afterwards, so this is a one-time step rather than a
+login. If the watch profile is refused it falls back to a plain association, which still gets the
+ring into a picker the user can confirm.
+
+Everything from v0.4 is still there and still tried first — answering the request ourselves, raising
+the Settings dialog directly, and Bluetooth settings by hand. This adds the path that does not depend
+on any of them working.
+
+Order to try, if a ring is being stubborn: **Let the phone pair it** → then **Probe**. The rest are
+fallbacks for a phone where the companion service is missing.
+
 ## BrightOura v0.4 — the chime with no dialog
 
 **"I hear a notification but nothing appears on screen" is the whole bug, and it is not ours.**
