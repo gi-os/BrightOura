@@ -1,3 +1,36 @@
+## BrightOura v0.3 — the prompt was never coming, and that was the bug
+
+**"No pairing prompt ever appears" is not a symptom, it is the normal case.** Most BLE bonds are
+"Just Works": the phone and the device agree on a key with **no dialog of any kind**. v0.2 asked
+Android to pair *before* connecting and then waited a minute for a user to accept something — so on
+a ring that needed no pairing, and on a ring that pairs silently, the app sat there and then reported
+a pairing failure on hardware that was ready to talk.
+
+**Connect first; bond only when the link says to.** A ring still onboarded to Oura's app will answer
+firmware and serial with no bond at all. If a GATT operation comes back with an
+insufficient-encryption status — 5, 15, or Android's own 137 — *then* the link genuinely needs a
+bond, and only then is one asked for. Nothing else in the GATT status space means "pair with me",
+and treating other failures as a pairing problem is how an app asks somebody to accept a prompt that
+was never going to appear.
+
+**A retry that re-scans, because the ring's address rotates.** An Oura ring advertises with a
+rotating private address, so the address from a scan a minute ago can already be stale — and a
+connect to a stale address fails with status 133, which reads exactly like "the ring is not there".
+The probe now looks again and tries once more, which turns the commonest failure on this phone into
+a retry nobody has to understand.
+
+**Status codes in words.** `133` is the number every Android BLE developer knows and no user could:
+it almost always means asleep, out of range, or busy with another phone. The screen says that now,
+along with the rest of them.
+
+**And it says whether a scan can even happen.** Bluetooth off and a refused scan permission produce
+an identical empty result from inside a scan, and neither is fixed by trying again — so both are
+checked and reported before the scan, not after it.
+
+**A Pair link button, for the ring that will not say so.** The connect path asks for a bond by itself
+when the link demands one. This is the manual version, and it reports what happened rather than
+implying a prompt: `createBond` refused, pairing finished, or a minute passed with nothing.
+
 ## BrightOura v0.2 — it pairs now, and it says what it is doing
 
 **Three things stopped the ring connecting, and all three were mine.**

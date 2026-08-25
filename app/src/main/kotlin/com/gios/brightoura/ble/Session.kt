@@ -27,7 +27,20 @@ class Session(private val context: Context, private val vault: Vault) {
     suspend fun probe(address: String, onProgress: (String) -> Unit = {}): Probe? {
         Trace.begin("probe $address")
         val step: (String) -> Unit = { line -> Trace.add(line); onProgress(line) }
-        val ring = Ring.connect(context, address, step) ?: return null
+        // Two attempts, and the second one re-scans first.
+        //
+        // An Oura ring advertises with a rotating private address, so the address a scan handed
+        // over a minute ago can already be stale — and a connect to a stale address fails with
+        // status 133, which reads as "the ring is not there". Looking again costs ten seconds and
+        // turns the commonest failure on this phone into a retry nobody has to understand.
+        val ring = Ring.connect(context, address, step) ?: run {
+            step("Looking for it again — the ring's address rotates")
+            val again = Ring.scan(context, timeoutMs = 6_000L, onProgress = step)
+                .rings
+                .firstOrNull()
+                ?: return null
+            Ring.connect(context, again.address, step)
+        } ?: return null
         step("Reading what it will say")
         return try {
             val firmware = ring.ask(Protocol.firmware())

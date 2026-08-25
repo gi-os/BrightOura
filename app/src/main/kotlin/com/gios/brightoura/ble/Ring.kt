@@ -207,21 +207,29 @@ class Ring private constructor(
             val device: BluetoothDevice = runCatching { adapter.getRemoteDevice(address) }
                 .getOrNull() ?: return null
 
-            // **Bond before connecting.** The ring refuses notify subscription and writes on an
-            // unencrypted link, and Android's own answer to that is a GATT failure rather than a
-            // pairing prompt — so a connect on an unbonded ring fails with nothing on screen and no
-            // prompt to accept. Asking for the bond explicitly is what raises the system dialog.
-            if (device.bondState == BluetoothDevice.BOND_NONE) {
-                onProgress("Asking to pair — accept the prompt on the phone")
-                if (!bond(context, device)) {
-                    onProgress("The pairing was refused or timed out")
-                    return null
-                }
-            }
-            onProgress("Connecting")
+            // **Connect first, bond only if the link asks for it.** v0.2 did the opposite —
+            // `createBond()` before connecting — on the reading that the ring refuses an
+            // unencrypted link. That is true after a factory reset and *not* true of a ring that
+            // is still onboarded, which will happily answer firmware and serial with no bond at
+            // all. Worse, a great many BLE bonds are "Just Works": they complete with **no prompt
+            // of any kind**, so an app that waits for the user to accept something waits for an
+            // event that is never coming, and then reports a pairing failure on a ring that was
+            // ready to talk.
+            //
+            // So: try. If a GATT operation comes back with an insufficient-encryption status, the
+            // link genuinely needs a bond, and only then is one asked for — see [needsBond].
+            onProgress(
+                if (device.bondState == BluetoothDevice.BOND_BONDED) {
+                    "Connecting (already paired)"
+                } else {
+                    "Connecting"
+                },
+            )
             val frames = Channel<ByteArray>(Channel.BUFFERED)
             val ready = Channel<Boolean>(Channel.CONFLATED)
             val opened = AtomicBoolean(false)
+            /** Set when a GATT status says the link is not encrypted enough. See below. */
+            val needsBond = AtomicBoolean(false)
             var connection: BluetoothGatt? = null
 
             val callback = object : BluetoothGattCallback() {
@@ -235,11 +243,13 @@ class Ring private constructor(
                         // never come.
                         if (!g.requestMtu(MTU)) g.discoverServices()
                     } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
+                        if (isEncryptionStatus(status)) needsBond.set(true)
                         onProgress(
-                            if (status == BluetoothGatt.GATT_SUCCESS) {
-                                "Disconnected"
-                            } else {
-                                "The link dropped (status $status)"
+                            when {
+                                status == BluetoothGatt.GATT_SUCCESS -> "Disconnected"
+                                isEncryptionStatus(status) ->
+                                    "The ring dropped the link asking for encryption (status $status)"
+                                else -> describe(status)
                             },
                         )
                         ready.trySend(false)
@@ -288,7 +298,10 @@ class Ring private constructor(
                     descriptor: BluetoothGattDescriptor,
                     status: Int,
                 ) {
-                    // Subscribed. Only now is the link able to carry a conversation.
+                    // Subscribing is the first thing that needs an encrypted link, so this is
+                    // where a missing bond announces itself — as a status code, not a prompt.
+                    if (isEncryptionStatus(status)) needsBond.set(true)
+                    if (status != BluetoothGatt.GATT_SUCCESS) onProgress(describe(status))
                     if (opened.compareAndSet(false, true)) {
                         ready.trySend(status == BluetoothGatt.GATT_SUCCESS)
                     }
@@ -320,11 +333,24 @@ class Ring private constructor(
             connection = runCatching {
                 device.connectGatt(context, false, callback, BluetoothDevice.TRANSPORT_LE)
             }.getOrNull()
-            val g = connection ?: return null
+            val g = connection ?: run {
+                onProgress("The phone refused to start a connection — is the scan permission on?")
+                return null
+            }
             val up = withTimeoutOrNull(CONNECT_MS) { ready.receive() } ?: false
             if (!up) {
                 runCatching { g.disconnect() }
                 runCatching { g.close() }
+                // The one case where a bond is the answer: the link said it needed encryption.
+                // Asked for here rather than pre-emptively, and reported either way — a bond that
+                // completes silently is normal, and a bond that never completes is worth naming.
+                if (needsBond.get() && device.bondState != BluetoothDevice.BOND_BONDED) {
+                    onProgress("The ring wants a paired link. Asking to pair…")
+                    val bonded = bond(context, device, onProgress)
+                    onProgress(
+                        if (bonded) "Paired. Try again." else "The pairing did not complete.",
+                    )
+                }
                 return null
             }
             val writeChar = g.getService(Protocol.SERVICE)?.getCharacteristic(Protocol.WRITE)
@@ -348,7 +374,11 @@ class Ring private constructor(
          * ring has to be awake to answer: a minute is not generous, it is realistic.
          */
         @SuppressLint("MissingPermission")
-        private suspend fun bond(context: Context, device: BluetoothDevice): Boolean {
+        suspend fun bond(
+            context: Context,
+            device: BluetoothDevice,
+            onProgress: (String) -> Unit = {},
+        ): Boolean {
             val done = Channel<Boolean>(Channel.CONFLATED)
             val receiver = object : android.content.BroadcastReceiver() {
                 override fun onReceive(c: Context?, intent: android.content.Intent?) {
@@ -375,11 +405,68 @@ class Ring private constructor(
                 }
             }
             return try {
-                if (!device.createBond()) return false
-                withTimeoutOrNull(BOND_MS) { done.receive() } ?: false
+                val asked = runCatching { device.createBond() }.getOrDefault(false)
+                if (!asked) {
+                    // False means the request itself was refused — a missing permission, or a
+                    // device the adapter will not bond with. Not a timeout, and worth saying so
+                    // rather than waiting a minute to say nothing.
+                    onProgress("The phone would not start pairing (permission, or the ring refused)")
+                    return false
+                }
+                onProgress(
+                    "Pairing… most rings pair with no prompt at all, so this may just finish",
+                )
+                val bonded = withTimeoutOrNull(BOND_MS) { done.receive() } ?: false
+                if (!bonded) onProgress("Pairing did not finish in a minute")
+                bonded
             } finally {
                 runCatching { context.unregisterReceiver(receiver) }
             }
+        }
+
+        /**
+         * The statuses that mean "this link is not encrypted enough", which is the only honest
+         * reason to go asking for a bond.
+         *
+         * `5` is insufficient authentication, `15` insufficient encryption, and `137` is Android's
+         * own `GATT_AUTH_FAIL`. Nothing else in the GATT status space means "pair with me", and
+         * treating other failures as a pairing problem is how an app asks somebody to accept a
+         * prompt that was never going to appear.
+         */
+        private fun isEncryptionStatus(status: Int): Boolean = status == 5 || status == 15 || status == 137
+
+        /**
+         * A GATT status in words.
+         *
+         * Not decoration: `133` is the status every Android BLE developer knows and no user could,
+         * and it almost always means the device is out of range or asleep rather than broken. A
+         * screen that says so saves an evening.
+         */
+        private fun describe(status: Int): String = when (status) {
+            0 -> "Fine"
+            8 -> "The ring dropped the link (timeout, status 8)"
+            19 -> "The ring closed the link (status 19)"
+            22 -> "The phone closed the link (status 22)"
+            133 -> "No answer from the ring (status 133) — asleep, out of range, or busy with " +
+                "another phone"
+            147 -> "The connection could not be set up (status 147)"
+            else -> "The link failed (status $status)"
+        }
+
+        /** Pair with a ring by address, for the button that asks for it deliberately. */
+        @SuppressLint("MissingPermission")
+        suspend fun bondWith(
+            context: Context,
+            address: String,
+            onProgress: (String) -> Unit = {},
+        ): Boolean {
+            val adapter = adapter(context) ?: return false
+            val device = runCatching { adapter.getRemoteDevice(address) }.getOrNull() ?: return false
+            if (device.bondState == BluetoothDevice.BOND_BONDED) {
+                onProgress("Already paired")
+                return true
+            }
+            return bond(context, device, onProgress)
         }
 
         /** Whether Bluetooth is even on. Asked before a scan, so the screen can say so. */

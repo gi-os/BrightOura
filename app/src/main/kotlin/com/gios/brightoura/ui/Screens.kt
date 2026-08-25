@@ -208,6 +208,16 @@ fun SetupScreen(vm: RingViewModel, onDone: () -> Unit) {
         item {
             SectionLabel("STEP ONE · FIND IT")
             MenuRow(
+                label = "Bluetooth",
+                detail = if (vm.bluetoothReady()) "READY" else "CHECK",
+                sub = if (vm.bluetoothReady()) {
+                    "On, and this app may scan and connect"
+                } else {
+                    "Either Bluetooth is off or the scan permission was refused — both look the " +
+                        "same from here, and neither can be fixed by trying again"
+                },
+            )
+            MenuRow(
                 label = "Scan",
                 detail = if (busy) "…" else "LOOK",
                 sub = "Ten seconds, everything nearby, then the rings picked out of it",
@@ -227,6 +237,13 @@ fun SetupScreen(vm: RingViewModel, onDone: () -> Unit) {
         if (found.isNotEmpty()) {
             item { SectionLabel("STEP TWO · LOOK AT IT") }
             items(found) { ring ->
+                MenuRow(
+                    label = "Pair with ${ring.name}",
+                    sub = "Only needed if a probe says the link wants encryption. Most rings " +
+                        "pair silently, with no prompt at all.",
+                    detail = if (busy) "…" else "PAIR LINK",
+                    onClick = { vm.bondWith(ring) },
+                )
                 MenuRow(
                     label = ring.name,
                     sub = buildString {

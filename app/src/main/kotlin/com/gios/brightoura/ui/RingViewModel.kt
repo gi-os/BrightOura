@@ -188,6 +188,51 @@ class RingViewModel(app: Application) : AndroidViewModel(app) {
         )
     }
 
+    /**
+     * Whether a scan can even happen: Bluetooth on, and the permissions actually granted.
+     *
+     * Asked rather than assumed, because the two failures are indistinguishable from inside a scan
+     * — a refused permission returns an empty result exactly like an empty room does.
+     */
+    fun bluetoothReady(): Boolean {
+        val app = getApplication<Application>()
+        if (!Ring.bluetoothOn(app)) return false
+        val needed = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+            listOf(
+                android.Manifest.permission.BLUETOOTH_SCAN,
+                android.Manifest.permission.BLUETOOTH_CONNECT,
+            )
+        } else {
+            listOf(android.Manifest.permission.ACCESS_FINE_LOCATION)
+        }
+        return needed.all {
+            app.checkSelfPermission(it) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        }
+    }
+
+    /**
+     * Ask Android to pair with the ring, deliberately.
+     *
+     * Here because a bond is *usually* unnecessary and occasionally the whole problem, and because
+     * "most rings pair with no prompt" is easier to believe when there is a button that says what
+     * happened. The connect path asks for one by itself when the link says it needs encryption;
+     * this is the manual version for a ring that will not say so.
+     */
+    fun bondWith(found: Ring.Found) = work("pair the Bluetooth link") {
+        Trace.begin("bond ${found.address}")
+        val ok = withContext(Dispatchers.IO) {
+            Ring.bondWith(getApplication(), found.address) { line -> Trace.add(line); step(line) }
+        }
+        say(
+            if (ok) {
+                "The link is paired. Probe it now."
+            } else {
+                "Pairing did not complete. Many rings need no pairing at all — probe it anyway."
+            },
+        )
+        if (!ok) fail("pair the Bluetooth link", "createBond did not reach BONDED")
+    }
+
     fun forget() {
         vault.forget()
         vault.address = null
