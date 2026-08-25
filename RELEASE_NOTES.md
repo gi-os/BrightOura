@@ -1,3 +1,46 @@
+## BrightOura v0.2 — it pairs now, and it says what it is doing
+
+**Three things stopped the ring connecting, and all three were mine.**
+
+**The scan filtered on the ring's advertised service UUID.** Correct for a ring that advertises it,
+and a ring that keeps it in its GATT table instead is then invisible — there is nothing to press.
+Everything nearby is scanned now and the rings are picked out of it three ways: the service if it is
+advertised, the name if the ring gave one, or an existing bond with something called Oura. The count
+of other devices seen is reported too, because "nothing at all answered" and "eleven things
+answered, none of them a ring" are different problems with the same empty list.
+
+**Nothing ever asked Android to pair.** The ring refuses notify subscription and writes on an
+unencrypted link, and the platform answers *that* with a GATT failure rather than a pairing prompt —
+so the connection failed with no dialog to accept and nothing on screen to explain it. `createBond()`
+is called before connecting now, with a minute to answer, which is what actually raises the system
+prompt.
+
+**And two smaller ones in the same path.** `connectGatt` was using `TRANSPORT_AUTO`, which on some
+phones tries BR/EDR against a device that only speaks BLE and fails as though the ring were not
+there — it asks for `TRANSPORT_LE` explicitly now. And a *refused* MTU request left the flow waiting
+for a callback that was never coming; it falls through to service discovery at the default MTU
+instead, which is worse but works.
+
+**The screen stays awake while it is working.** LightOS's timeout is short, the pairing prompt is a
+notification you have to reach for, and a screen that sleeps mid-pairing takes the prompt with it.
+Held only while something is in flight — an idle app does not keep the panel on.
+
+**And it says what it is trying.** Every step reports itself: asking to pair, connecting, raising the
+MTU, discovering services, subscribing, authenticating. Ten to sixty seconds of silence is how a
+person ends up pressing a button twice, which starts a second conversation with the same ring and
+breaks both.
+
+**A failure files itself, with the trail attached.** Not offered — filed. Everywhere else in the
+collection a report waits for a tap, and this is the one app where that is wrong: it talks to
+hardware whose protocol came from somebody else's reverse engineering, against a ring generation
+nobody has tested it on, and the breadcrumbs explaining a failure are gone the moment the screen
+changes. Steps, timings and status codes go in; no serial, no key, no measurements. One report per
+kind of failure per ten minutes.
+
+Reports queue on disk and go out when a build has a reporting key. This repository has no
+`REPORT_TOKEN` secret yet, so they will wait — the RING screen says so when any are waiting, rather
+than letting them pile up silently.
+
 ## BrightOura v0.1 — it talks to the ring
 
 **First release, and deliberately the unglamorous half.** Find a ring, look at it without touching
