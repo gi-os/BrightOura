@@ -5,6 +5,8 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Test
+import javax.crypto.Cipher
+import javax.crypto.spec.SecretKeySpec
 
 /**
  * The challenge-response, and the one property that matters about it.
@@ -23,11 +25,14 @@ class AuthTest {
     fun `padding a nonce by hand gives the same proof as PKCS5 does`() {
         val nonce = ByteArray(15) { (it * 11 + 5).toByte() }
         val viaPadding = Auth.proof(key, nonce)
-        val byHand = Auth.proof(key, nonce + byteArrayOf(0x01))
+        // The same operation stated the other way: one AES block over the nonce with a single
+        // 0x01 appended. PKCS#5 on a 15-byte input appends exactly that, which is why the two
+        // published descriptions of this protocol are one description.
+        val cipher = Cipher.getInstance("AES/ECB/NoPadding")
+        cipher.init(Cipher.ENCRYPT_MODE, SecretKeySpec(key, "AES"))
+        val byHand = cipher.doFinal(nonce + byteArrayOf(0x01))
         assertNotNull(viaPadding)
-        // A full block with PKCS#5 gains a second block of padding, so only the first sixteen
-        // bytes are the proof — which is exactly what the ring compares.
-        assertEquals(Auth.hex(viaPadding!!), Auth.hex(byHand!!.copyOf(16)))
+        assertEquals(Auth.hex(byHand), Auth.hex(viaPadding!!))
     }
 
     @Test
