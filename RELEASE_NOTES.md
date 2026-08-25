@@ -1,3 +1,27 @@
+## BrightOura v0.6 — the watcher was listening at the wrong moment
+
+**The chime during a probe had nothing listening to it.** v0.4 watched for the pairing request only
+while an *explicit* bond was in flight — and that is not when the request arrives. It arrives the
+moment a connection touches something needing an encrypted link, which is during the probe itself.
+So the phone chimed, the one chance to put the dialog on screen went past unheard, and the request
+expired. The watcher now covers the whole connection.
+
+**And the ring listed twice, which was also real.** A ring advertises with a rotating private
+address, so the same ring shows up under two of them inside a minute — and a bonded ring adds a
+third entry from the bond list sharing an address with neither. One row per ring now, keyed on its
+name, keeping the bonded entry if there is one and otherwise the strongest signal. Each row says
+whether the phone considers it paired, because that is the fact the whole setup turns on.
+
+**The instruction that actually works is now first on the screen: pair it in the phone's own
+Bluetooth settings.** LightOS draws its own pairing prompt there. The system's notification-based
+request — the chime with nothing behind it — is what this app cannot reach, and no amount of
+retrying inside the app will change that. A bond made once in that screen outlives every other path
+here, and a probe afterwards needs none of them.
+
+The other three routes stay as fallbacks: the companion picker, answering the request in-process,
+and raising the Settings dialog directly. A failed probe now points at the one that works instead of
+suggesting you try again.
+
 ## BrightOura v0.5 — let the phone do the pairing
 
 **The probe is what triggers the chime, which tells us the ring does want a bonded link.** So the

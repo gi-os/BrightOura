@@ -175,8 +175,18 @@ class Ring private constructor(
                 )
             }
             runCatching { scanner.stopScan(callback) }
+            // **One row per ring.** A ring advertises with a rotating private address, so the same
+            // ring appears under two of them within a minute — and a bonded ring adds a third entry
+            // from the bond list with no address in common with either. Keyed on the name, keeping
+            // the bonded entry if there is one and otherwise the strongest signal, because that is
+            // the one a connection has the best chance with.
+            val unique = rings.values
+                .groupBy { it.name }
+                .map { (_, seen) ->
+                    seen.firstOrNull { it.bonded } ?: seen.maxByOrNull { it.rssi } ?: seen.first()
+                }
             return Scan(
-                rings = rings.values.sortedByDescending { it.rssi },
+                rings = unique.sortedByDescending { it.rssi },
                 otherDevices = others.size,
                 note = when {
                     rings.isNotEmpty() -> null
@@ -225,6 +235,13 @@ class Ring private constructor(
                     "Connecting"
                 },
             )
+
+            // **Watch for the pairing request for the whole connection.** v0.4 only watched while
+            // an explicit bond was in flight, and the request does not arrive then — it arrives the
+            // moment a connection touches something that needs an encrypted link, which is during
+            // *this*. So the chime happened with nothing listening, and the one chance to put the
+            // dialog on screen went past. See [Pairing].
+            val watcher = Pairing.watch(context, onProgress)
             val frames = Channel<ByteArray>(Channel.BUFFERED)
             val ready = Channel<Boolean>(Channel.CONFLATED)
             val opened = AtomicBoolean(false)
@@ -339,6 +356,7 @@ class Ring private constructor(
             }
             val up = withTimeoutOrNull(CONNECT_MS) { ready.receive() } ?: false
             if (!up) {
+                runCatching { watcher.close() }
                 runCatching { g.disconnect() }
                 runCatching { g.close() }
                 // The one case where a bond is the answer: the link said it needed encryption.
@@ -353,6 +371,7 @@ class Ring private constructor(
                 }
                 return null
             }
+            runCatching { watcher.close() }
             val writeChar = g.getService(Protocol.SERVICE)?.getCharacteristic(Protocol.WRITE)
             if (writeChar == null) {
                 runCatching { g.disconnect() }

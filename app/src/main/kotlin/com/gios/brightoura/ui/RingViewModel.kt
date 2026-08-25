@@ -98,8 +98,9 @@ class RingViewModel(app: Application) : AndroidViewModel(app) {
         _probe.value = result
         say(
             when {
-                result == null -> "Could not connect. If a pairing prompt appeared, accept it and " +
-                    "try again — the ring refuses to talk on an unpaired link."
+                result == null -> "Could not connect. This ring wants a paired link, and the " +
+                    "phone's pairing request never draws on this screen — pair it once in the " +
+                    "phone's own Bluetooth settings, then probe again."
                 result.keyed -> "This ring already has a key — Oura's app has it, or a previous " +
                     "pairing here does."
                 else -> "Ready to pair."

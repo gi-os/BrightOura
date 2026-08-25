@@ -238,19 +238,19 @@ fun SetupScreen(vm: RingViewModel, onDone: () -> Unit) {
             item { SectionLabel("STEP TWO · LOOK AT IT") }
             items(found) { ring ->
                 MenuRow(
+                    label = "Pair it in the phone's Bluetooth screen",
+                    detail = "OPEN",
+                    sub = "The way that works: LightOS draws its own pairing prompt there, where " +
+                        "the system's notification never appears. Pair the ring once, come back, " +
+                        "and probe — the bond outlives everything else here.",
+                    onClick = { vm.openBluetoothSettings() },
+                )
+                MenuRow(
                     label = "Let the phone pair it",
                     detail = if (busy) "…" else "SYSTEM",
                     sub = "Runs the phone's own device picker — an actual dialog, not a " +
                         "notification, so it appears on this phone. The system does the pairing.",
                     onClick = { vm.pairViaSystem() },
-                )
-                MenuRow(
-                    label = "Bluetooth settings",
-                    detail = "OPEN",
-                    sub = "Pair the ring there once. A bond made in the system's own screen is " +
-                        "one this app never has to ask for again — and on this phone the pairing " +
-                        "request chimes without ever appearing.",
-                    onClick = { vm.openBluetoothSettings() },
                 )
                 MenuRow(
                     label = "Pair with ${ring.name}",
@@ -262,9 +262,9 @@ fun SetupScreen(vm: RingViewModel, onDone: () -> Unit) {
                 MenuRow(
                     label = ring.name,
                     sub = buildString {
+                        append(if (ring.bonded) "Paired · " else "Not paired · ")
                         append(ring.address)
                         if (ring.rssi != 0) append(" · ${ring.rssi} dBm")
-                        append(if (ring.bonded) " · paired" else " · not paired yet")
                     },
                     detail = if (busy) "…" else "PROBE",
                     onClick = { vm.probe(ring) },
