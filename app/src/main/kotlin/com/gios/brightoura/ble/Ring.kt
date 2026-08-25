@@ -493,6 +493,20 @@ class Ring private constructor(
             return bond(context, device, onProgress)
         }
 
+        /**
+         * What this phone is bonded to, with its bond state, for the diagnosis.
+         *
+         * The one question that decides everything else: a ring the phone already trusts needs
+         * none of the pairing machinery, and a ring bonded to *another* phone will refuse a second
+         * link whatever this app does.
+         */
+        @SuppressLint("MissingPermission")
+        fun bondedNames(context: Context): List<String> = runCatching {
+            adapter(context)?.bondedDevices?.map { device ->
+                "${device.name ?: "unnamed"} ${device.address} state=${device.bondState}"
+            }.orEmpty()
+        }.getOrDefault(emptyList())
+
         /** Whether Bluetooth is even on. Asked before a scan, so the screen can say so. */
         fun bluetoothOn(context: Context): Boolean = adapter(context)?.isEnabled == true
 

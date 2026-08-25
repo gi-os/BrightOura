@@ -329,6 +329,24 @@ fun SetupScreen(vm: RingViewModel, onDone: () -> Unit) {
         }
 
         item {
+            Rule()
+            SectionLabel("WHEN IT WILL NOT PAIR")
+            MenuRow(
+                label = "Copy the diagnosis",
+                detail = "COPY",
+                sub = "Adapter, permissions, bond states, the association, and the last attempt " +
+                    "step by step — on the clipboard, ready to paste to somebody who can read it.",
+                onClick = { vm.copyDiagnosis() },
+            )
+            Text(
+                text = "Two things worth trying before anything in this app: unpair or switch off " +
+                    "the phone that already owns the ring — a ring holding one link will refuse a " +
+                    "second — and pair from Light's own Bluetooth screen rather than the system " +
+                    "settings app, which crashes on the pairing screen on this phone.",
+                style = MaterialTheme.typography.bodySmall,
+                color = Dim,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
+            )
             said?.let { line ->
                 Text(
                     text = line,

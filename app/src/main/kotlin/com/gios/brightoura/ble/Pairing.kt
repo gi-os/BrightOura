@@ -130,13 +130,39 @@ object Pairing {
     }
 
     /**
-     * Open the phone's Bluetooth settings, where a bond can be made by hand.
+     * Open a Bluetooth screen where a bond can be made by hand — **LightOS's own, first**.
      *
-     * The reliable path when everything else is refused, and the one worth doing once: a bond made
-     * there is a bond this app never has to ask for again.
+     * `ACTION_BLUETOOTH_SETTINGS` resolves to AOSP's Settings app, and on this phone that app
+     * crashes on the pairing screen. LightOS has a Bluetooth screen of its own — it is how the
+     * phone pairs earbuds — and it draws its own prompt rather than relying on the system
+     * notification nothing renders. So this looks for that first, by asking the package manager
+     * which of LightOS's own activities sound like Bluetooth.
+     *
+     * Named by search rather than hardcoded: the component is not documented anywhere and an
+     * activity name in somebody else's launcher is exactly the sort of constant that changes in an
+     * update. If nothing is found, the answer is LightOS's home screen — from which its own
+     * settings are two taps away and definitely not crashing.
      */
-    fun openSettings(context: Context): Boolean {
+    fun openSettings(context: Context, onProgress: (String) -> Unit = {}): Boolean {
+        lightOsBluetooth(context)?.let { component ->
+            val ok = runCatching {
+                context.startActivity(
+                    Intent(Intent.ACTION_MAIN)
+                        .setComponent(component)
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                )
+                true
+            }.getOrDefault(false)
+            if (ok) {
+                Trace.add("opened ${component.className}")
+                onProgress("Opened Light's own Bluetooth screen")
+                return true
+            }
+        }
         val attempts = listOf(
+            // LightOS's dashboard: its Bluetooth screen is inside this, and it is the one UI on
+            // the phone that is definitely not the crashing Settings app.
+            Intent(Intent.ACTION_MAIN).setPackage(LIGHTOS),
             Intent(Settings.ACTION_BLUETOOTH_SETTINGS),
             Intent(Settings.ACTION_SETTINGS),
         )
@@ -145,11 +171,36 @@ object Pairing {
                 context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
                 true
             }.getOrDefault(false)
-            if (ok) return true
+            if (ok) {
+                onProgress(
+                    if (intent.`package` == LIGHTOS) {
+                        "Opened Light's own settings — Bluetooth is in there"
+                    } else {
+                        "Opened the system settings app"
+                    },
+                )
+                return true
+            }
         }
         return false
     }
 
+    /**
+     * Whichever of LightOS's activities looks like a Bluetooth screen.
+     *
+     * Asked of the installed package rather than assumed. `QUERY_ALL_PACKAGES` is already held for
+     * the scan, and reading an activity list costs one call.
+     */
+    private fun lightOsBluetooth(context: Context): android.content.ComponentName? = runCatching {
+        val flags = android.content.pm.PackageManager.GET_ACTIVITIES
+        val info = context.packageManager.getPackageInfo(LIGHTOS, flags)
+        info.activities
+            ?.map { it.name }
+            ?.firstOrNull { it.contains("bluetooth", ignoreCase = true) }
+            ?.let { android.content.ComponentName(LIGHTOS, it) }
+    }.getOrNull()
+
     private const val SETTINGS = "com.android.settings"
+    private const val LIGHTOS = "com.lightos"
     private const val DIALOG = "com.android.settings.bluetooth.BluetoothPairingDialog"
 }

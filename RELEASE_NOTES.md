@@ -1,3 +1,29 @@
+## BrightOura v0.7 — around the crashing Settings app
+
+**The system settings app crashes on its pairing screen, so this stops sending you there.** That is
+not something an app can fix from outside, and retrying it is not a plan. LightOS has a Bluetooth
+screen of its own — it is how this phone pairs earbuds, and it draws its own prompt rather than
+relying on the notification nothing renders here.
+
+So the Bluetooth row now looks for *that* first: it asks the package manager which of LightOS's own
+activities sound like Bluetooth and opens it directly. Found by search rather than hardcoded, because
+an activity name inside somebody else's launcher is exactly the constant that changes in an update.
+If there is no match it opens LightOS's own settings, and only then falls back to the app that
+crashes.
+
+**Copy the diagnosis.** A row that puts the whole state of this on the clipboard: adapter, whether
+the permissions really are granted, every device the phone is bonded to and its bond state, whether
+the system holds a companion association, whether a key is stored, and the last attempt step by step.
+This repository has no reporting key yet, so the fastest path from a stuck phone to a fix is a paste
+into a chat window rather than a report that queues forever.
+
+**And the two things worth trying before anything in this app**, now written on the screen where
+they matter:
+
+- **Unpair or switch off the phone that already owns the ring.** A ring holding one link refuses a
+  second, and that failure looks identical to "the ring is not there" — status 133, no answer.
+- **Pair from Light's own Bluetooth screen**, not the system settings app.
+
 ## BrightOura v0.6 — the watcher was listening at the wrong moment
 
 **The chime during a probe had nothing listening to it.** v0.4 watched for the pairing request only

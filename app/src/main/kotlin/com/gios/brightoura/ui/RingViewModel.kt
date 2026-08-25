@@ -278,14 +278,43 @@ class RingViewModel(app: Application) : AndroidViewModel(app) {
      * only has to be done once, because the bond outlives it.
      */
     fun openBluetoothSettings() {
-        val ok = com.gios.brightoura.ble.Pairing.openSettings(getApplication())
+        val ok = com.gios.brightoura.ble.Pairing.openSettings(getApplication()) { step(it) }
         say(
             if (ok) {
                 "Pair the ring there, then come back and probe it."
             } else {
-                "This phone has no Bluetooth settings screen to open."
+                "Nothing on this phone would open a Bluetooth screen."
             },
         )
+    }
+
+    /**
+     * Everything the phone will say about the state of this, as one block of text.
+     *
+     * On the clipboard rather than in a report, because this app has no reporting key yet and the
+     * fastest path from a stuck phone to a fix is a paste into a chat window. Adapter, permissions,
+     * bond states, whether the system holds a companion association, and the last attempt's trail.
+     */
+    fun copyDiagnosis() {
+        val app = getApplication<Application>()
+        val text = buildString {
+            appendLine("BrightOura diagnosis")
+            appendLine("bluetooth on: ${Ring.bluetoothOn(app)}")
+            appendLine("permissions ok: ${bluetoothReady()}")
+            appendLine("companion association: ${Companions.associated(app)}")
+            appendLine("ring stored: ${vault.name ?: "none"} ${vault.address ?: ""}")
+            appendLine("key held: ${vault.key() != null}")
+            appendLine("bonded devices:")
+            Ring.bondedNames(app).forEach { appendLine("  $it") }
+            appendLine()
+            appendLine("last attempt:")
+            appendLine(Trace.text())
+        }
+        runCatching {
+            val clipboard = app.getSystemService(android.content.ClipboardManager::class.java)
+            clipboard?.setPrimaryClip(android.content.ClipData.newPlainText("BrightOura", text))
+        }
+        say("Copied. Paste it anywhere — it is the whole state of this, in words.")
     }
 
     fun forget() {
