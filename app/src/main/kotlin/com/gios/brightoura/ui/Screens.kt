@@ -14,12 +14,57 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.platform.LocalView
+import androidx.compose.runtime.DisposableEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.gios.light.common.hw.WheelScroll
 import com.gios.light.common.theme.Dim
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+
+/**
+ * What the app is doing, right now, and the last few steps of it.
+ *
+ * A BLE conversation is ten to sixty seconds of waiting, most of it invisible: a bond request, a
+ * connect, an MTU negotiation, a service discovery, a nonce. A screen that shows nothing during
+ * that is a screen somebody presses a second time — which starts a second conversation with the
+ * same ring and breaks both. So the stage is on screen, and the trail behind it is too.
+ */
+@Composable
+fun Working(vm: RingViewModel) {
+    val busy by vm.busy.collectAsStateWithLifecycle()
+    val stage by vm.stage.collectAsStateWithLifecycle()
+    val trail by vm.trail.collectAsStateWithLifecycle()
+
+    // **The screen stays on while it is working.** LightOS's timeout is short and the system
+    // pairing prompt is a notification you have to reach for — a screen that sleeps mid-pairing
+    // takes the prompt with it, and the whole attempt has to start again. Held only while busy, so
+    // an idle app is not keeping the panel awake.
+    val view = LocalView.current
+    DisposableEffect(busy) {
+        view.keepScreenOn = busy
+        onDispose { view.keepScreenOn = false }
+    }
+
+    if (!busy && stage == null) return
+    Column {
+        Text(
+            text = stage ?: "Working",
+            style = MaterialTheme.typography.bodyLarge,
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
+        )
+        trail.take(4).forEach { line ->
+            Text(
+                text = line,
+                style = MaterialTheme.typography.bodySmall,
+                color = Dim,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+            )
+        }
+        Rule(Modifier.padding(top = 8.dp))
+    }
+}
 
 /**
  * What the ring has said, and what to do next.
@@ -40,6 +85,7 @@ fun TodayScreen(vm: RingViewModel, onSetup: () -> Unit) {
     LaunchedEffect(Unit) { vm.refreshCounts() }
 
     LazyColumn(Modifier.fillMaxSize(), state = listState) {
+        item { Working(vm) }
         item {
             SectionLabel("RING")
             MenuRow(
@@ -75,6 +121,20 @@ fun TodayScreen(vm: RingViewModel, onSetup: () -> Unit) {
         }
 
         item {
+            val queued = vm.queuedReports()
+            if (queued > 0) {
+                SectionLabel("REPORTS")
+                MenuRow(
+                    label = if (queued == 1) "1 report waiting" else "$queued reports waiting",
+                    detail = if (vm.canSendReports()) "SENDING" else "NO KEY",
+                    sub = if (vm.canSendReports()) {
+                        "Queued failures go out on their own."
+                    } else {
+                        "This build has no reporting key, so they wait. A build with one sends them."
+                    },
+                )
+                Rule()
+            }
             SectionLabel("ASK THE RING")
             MenuRow(
                 label = "Sync history",
@@ -144,13 +204,22 @@ fun SetupScreen(vm: RingViewModel, onDone: () -> Unit) {
     WheelScroll(listState)
 
     LazyColumn(Modifier.fillMaxSize(), state = listState) {
+        item { Working(vm) }
         item {
             SectionLabel("STEP ONE · FIND IT")
             MenuRow(
                 label = "Scan",
                 detail = if (busy) "…" else "LOOK",
-                sub = "Filtered on the ring's service, so the name it advertises does not matter",
+                sub = "Ten seconds, everything nearby, then the rings picked out of it",
                 onClick = { vm.scan() },
+            )
+            Text(
+                text = "Wear the ring or put it on the charger first — a ring asleep on a table " +
+                    "does not advertise. The first connection asks Android to pair; accept the " +
+                    "prompt, and the screen will stay awake until it is done.",
+                style = MaterialTheme.typography.bodySmall,
+                color = Dim,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
             )
             Rule()
         }
@@ -160,8 +229,12 @@ fun SetupScreen(vm: RingViewModel, onDone: () -> Unit) {
             items(found) { ring ->
                 MenuRow(
                     label = ring.name,
-                    sub = "${ring.address} · ${ring.rssi} dBm",
-                    detail = "PROBE",
+                    sub = buildString {
+                        append(ring.address)
+                        if (ring.rssi != 0) append(" · ${ring.rssi} dBm")
+                        append(if (ring.bonded) " · paired" else " · not paired yet")
+                    },
+                    detail = if (busy) "…" else "PROBE",
                     onClick = { vm.probe(ring) },
                 )
             }
@@ -243,7 +316,30 @@ fun FramesScreen(vm: RingViewModel) {
     WheelScroll(listState)
     val lines = vm.logTail()
 
+    val trail by vm.trail.collectAsStateWithLifecycle()
+
     LazyColumn(Modifier.fillMaxSize(), state = listState) {
+        if (trail.isNotEmpty()) {
+            item {
+                SectionLabel("WHAT JUST HAPPENED")
+                Text(
+                    text = "The last attempt, step by step. A failure files this automatically, so " +
+                        "it can be read afterwards rather than guessed at.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Dim,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                )
+            }
+            items(trail) { line ->
+                Text(
+                    text = line,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Dim,
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 2.dp),
+                )
+            }
+            item { Rule() }
+        }
         item {
             SectionLabel("LAST FRAMES")
             Text(

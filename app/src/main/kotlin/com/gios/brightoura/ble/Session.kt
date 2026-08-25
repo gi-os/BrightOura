@@ -1,6 +1,7 @@
 package com.gios.brightoura.ble
 
 import android.content.Context
+import com.gios.brightoura.data.Trace
 import com.gios.brightoura.data.Vault
 
 /**
@@ -23,8 +24,11 @@ class Session(private val context: Context, private val vault: Vault) {
      * first screen of setup: it proves the app can see *your* ring, and it works on a ring that is
      * still paired to Oura's app. Nothing here changes anything on the ring.
      */
-    suspend fun probe(address: String): Probe? {
-        val ring = Ring.connect(context, address) ?: return null
+    suspend fun probe(address: String, onProgress: (String) -> Unit = {}): Probe? {
+        Trace.begin("probe $address")
+        val step: (String) -> Unit = { line -> Trace.add(line); onProgress(line) }
+        val ring = Ring.connect(context, address, step) ?: return null
+        step("Reading what it will say")
         return try {
             val firmware = ring.ask(Protocol.firmware())
             val serial = ring.ask(Protocol.serial())
@@ -63,9 +67,12 @@ class Session(private val context: Context, private val vault: Vault) {
      * turns them on at onboarding. Skip this and the ring authenticates, syncs, and produces no
      * heart rate at all — the app would look broken while working perfectly.
      */
-    suspend fun pair(address: String, name: String?): Pairing {
-        val ring = Ring.connect(context, address) ?: return Pairing.NoConnection
+    suspend fun pair(address: String, name: String?, onProgress: (String) -> Unit = {}): Pairing {
+        Trace.begin("pair $address")
+        val step: (String) -> Unit = { line -> Trace.add(line); onProgress(line) }
+        val ring = Ring.connect(context, address, step) ?: return Pairing.NoConnection
         return try {
+            step("Installing a key")
             val key = Auth.newKey()
             val installed = ring.ask(Protocol.setAuthKey(key))
                 ?: return Pairing.NoConnection
@@ -73,10 +80,12 @@ class Session(private val context: Context, private val vault: Vault) {
             // overwhelmingly likely reason is that it already holds a key.
             val ok = installed.tag == 0x25 && installed.payload.firstOrNull()?.toInt() == 0x00
             if (!ok) return Pairing.AlreadyKeyed
+            step("Authenticating")
             if (!authenticate(ring, key)) return Pairing.AuthFailed
             if (!vault.store(key)) return Pairing.CouldNotStore
             vault.address = address
             vault.name = name
+            step("Switching the measuring on")
             val enabled = enableMeasurement(ring)
             Pairing.Paired(featuresEnabled = enabled)
         } finally {
@@ -102,14 +111,27 @@ class Session(private val context: Context, private val vault: Vault) {
 
     /** The nonce dance. False on a wrong key, a silent ring, or a malformed challenge. */
     private suspend fun authenticate(ring: Ring, key: ByteArray): Boolean {
-        val nonce = ring.ask(Protocol.authNonce()) ?: return false
+        val nonce = ring.ask(Protocol.authNonce())
+        if (nonce == null) {
+            Trace.add("no answer to the nonce request")
+            return false
+        }
         // `2f 10 2c <15 bytes>` — the challenge sits after the extended tag.
-        if (nonce.tag != Protocol.EXT || nonce.ext != 0x2c) return false
+        if (nonce.tag != Protocol.EXT || nonce.ext != 0x2c) {
+            Trace.add("unexpected answer to the nonce request: ${nonce.tag} / ${nonce.ext}")
+            return false
+        }
         val challenge = nonce.payload.drop(1).toByteArray()
         val proof = Auth.proof(key, challenge) ?: return false
-        val answer = ring.ask(Protocol.authenticate(proof)) ?: return false
+        val answer = ring.ask(Protocol.authenticate(proof))
+        if (answer == null) {
+            Trace.add("no answer to the proof")
+            return false
+        }
         // `2f 02 2e 00` accepted, `...01` rejected.
-        return answer.ext == 0x2e && answer.payload.getOrNull(1)?.toInt() == 0x00
+        val ok = answer.ext == 0x2e && answer.payload.getOrNull(1)?.toInt() == 0x00
+        Trace.add(if (ok) "authenticated" else "the ring rejected the key")
+        return ok
     }
 
     /**
@@ -119,11 +141,17 @@ class Session(private val context: Context, private val vault: Vault) {
      * key yet", "key the ring no longer accepts" and "ring not here" are told apart — those are
      * three different sentences on a screen and one shrug in a log.
      */
-    suspend fun <T> authenticated(block: suspend (Ring) -> T): Authenticated<T> {
+    suspend fun <T> authenticated(
+        onProgress: (String) -> Unit = {},
+        block: suspend (Ring) -> T,
+    ): Authenticated<T> {
+        Trace.begin("authenticated session")
+        val step: (String) -> Unit = { line -> Trace.add(line); onProgress(line) }
         val key = vault.key() ?: return Authenticated.NoKey()
         val address = vault.address ?: return Authenticated.NoRing()
-        val ring = Ring.connect(context, address) ?: return Authenticated.NoRing()
+        val ring = Ring.connect(context, address, step) ?: return Authenticated.NoRing()
         return try {
+            step("Authenticating")
             if (!authenticate(ring, key)) {
                 Authenticated.Rejected()
             } else {

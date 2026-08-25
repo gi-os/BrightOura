@@ -98,37 +98,96 @@ class Ring private constructor(
         /**
          * Look for rings.
          *
-         * Filtered on the service UUID rather than on the name, because the name changes: a
-         * factory-reset ring advertises `Oura XXXXXXXX` and the same ring calls itself
-         * `Oura Ring Gen3` once an app has keyed it. The service is the constant.
+         * **Unfiltered, and that is the fix rather than the shortcut.** The first version filtered
+         * on the ring's service UUID, which is correct for a ring that advertises it — and a ring
+         * that does not advertise it is then invisible. An Oura ring's advertisement is small: it
+         * carries a name and sometimes nothing else, and which generation puts the service in the
+         * advertisement versus only in the GATT table is not something to bet a scan on.
+         *
+         * So everything is scanned and matched afterwards, three ways: the service if it is
+         * advertised, the name if the ring gave one, or a bond that already exists with something
+         * called Oura. Whatever else is nearby is counted and reported — a scan that finds eleven
+         * devices and no ring is a different problem from a scan that finds nothing at all, and the
+         * screen should be able to say which.
          */
         @SuppressLint("MissingPermission")
-        suspend fun scan(context: Context, timeoutMs: Long = 8_000L): List<Found> {
-            val adapter = adapter(context) ?: return emptyList()
-            val scanner = adapter.bluetoothLeScanner ?: return emptyList()
-            val found = LinkedHashMap<String, Found>()
+        suspend fun scan(
+            context: Context,
+            timeoutMs: Long = 10_000L,
+            onProgress: (String) -> Unit = {},
+        ): Scan {
+            val adapter = adapter(context) ?: return Scan(emptyList(), 0, "Bluetooth is unavailable")
+            val scanner = adapter.bluetoothLeScanner
+                ?: return Scan(emptyList(), 0, "No BLE scanner — is Bluetooth on?")
+            val rings = LinkedHashMap<String, Found>()
+            val others = HashSet<String>()
+
+            // A ring already bonded to this phone may not be advertising at all — it does not need
+            // to. Bonded devices are checked first so a paired ring is offered instantly.
+            runCatching {
+                adapter.bondedDevices?.forEach { device ->
+                    val name = device.name ?: return@forEach
+                    if (name.startsWith(NAME_PREFIX, ignoreCase = true)) {
+                        rings[device.address] = Found(device.address, name, rssi = 0, bonded = true)
+                    }
+                }
+            }
+
             val callback = object : ScanCallback() {
                 override fun onScanResult(callbackType: Int, result: ScanResult) {
                     val device = result.device ?: return
                     val name = result.scanRecord?.deviceName ?: device.name
-                    found[device.address] = Found(
-                        address = device.address,
-                        name = name ?: "Oura ring",
-                        rssi = result.rssi,
-                    )
+                    val advertises = result.scanRecord?.serviceUuids
+                        ?.any { it.uuid == Protocol.SERVICE } == true
+                    val looksLikeOura = name?.startsWith(NAME_PREFIX, ignoreCase = true) == true
+                    if (advertises || looksLikeOura) {
+                        rings[device.address] = Found(
+                            address = device.address,
+                            name = name ?: "Oura ring",
+                            rssi = result.rssi,
+                            bonded = device.bondState == BluetoothDevice.BOND_BONDED,
+                        )
+                        onProgress("Found ${name ?: device.address}")
+                    } else {
+                        others.add(device.address)
+                    }
+                }
+
+                override fun onScanFailed(errorCode: Int) {
+                    onProgress("The scan was refused (code $errorCode)")
                 }
             }
-            val filter = ScanFilter.Builder()
-                .setServiceUuid(android.os.ParcelUuid(Protocol.SERVICE))
-                .build()
             val settings = ScanSettings.Builder()
                 .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
                 .build()
-            runCatching { scanner.startScan(listOf(filter), settings, callback) }
-                .onFailure { return emptyList() }
-            withTimeoutOrNull(timeoutMs) { kotlinx.coroutines.delay(timeoutMs) }
+            runCatching { scanner.startScan(null, settings, callback) }
+                .onFailure { return Scan(emptyList(), 0, it.message ?: "The scan could not start") }
+            // Reported as it goes, so a scan that finds nothing still looks like something
+            // happening rather than a frozen screen.
+            val step = 1_000L
+            var waited = 0L
+            while (waited < timeoutMs) {
+                kotlinx.coroutines.delay(step)
+                waited += step
+                onProgress(
+                    "Looking… ${waited / 1000}s · ${rings.size} ring${if (rings.size == 1) "" else "s"}" +
+                        if (others.isEmpty()) "" else ", ${others.size} other device(s)",
+                )
+            }
             runCatching { scanner.stopScan(callback) }
-            return found.values.sortedByDescending { it.rssi }
+            return Scan(
+                rings = rings.values.sortedByDescending { it.rssi },
+                otherDevices = others.size,
+                note = when {
+                    rings.isNotEmpty() -> null
+                    others.isEmpty() ->
+                        "Nothing at all answered. Bluetooth may be off, or the scan permission " +
+                            "was refused."
+                    else ->
+                        "Saw ${others.size} other device(s) but no ring. Wear it or put it on the " +
+                            "charger to wake its radio, then look again."
+                },
+            )
         }
 
         /**
@@ -139,10 +198,27 @@ class Ring private constructor(
          * session that needs the key.
          */
         @SuppressLint("MissingPermission")
-        suspend fun connect(context: Context, address: String): Ring? {
+        suspend fun connect(
+            context: Context,
+            address: String,
+            onProgress: (String) -> Unit = {},
+        ): Ring? {
             val adapter = adapter(context) ?: return null
             val device: BluetoothDevice = runCatching { adapter.getRemoteDevice(address) }
                 .getOrNull() ?: return null
+
+            // **Bond before connecting.** The ring refuses notify subscription and writes on an
+            // unencrypted link, and Android's own answer to that is a GATT failure rather than a
+            // pairing prompt — so a connect on an unbonded ring fails with nothing on screen and no
+            // prompt to accept. Asking for the bond explicitly is what raises the system dialog.
+            if (device.bondState == BluetoothDevice.BOND_NONE) {
+                onProgress("Asking to pair — accept the prompt on the phone")
+                if (!bond(context, device)) {
+                    onProgress("The pairing was refused or timed out")
+                    return null
+                }
+            }
+            onProgress("Connecting")
             val frames = Channel<ByteArray>(Channel.BUFFERED)
             val ready = Channel<Boolean>(Channel.CONFLATED)
             val opened = AtomicBoolean(false)
@@ -151,16 +227,28 @@ class Ring private constructor(
             val callback = object : BluetoothGattCallback() {
                 override fun onConnectionStateChange(g: BluetoothGatt, status: Int, newState: Int) {
                     if (newState == BluetoothProfile.STATE_CONNECTED) {
+                        onProgress("Connected · raising the MTU")
                         // The MTU comes first: history frames are up to 203 bytes and this code
-                        // does not reassemble fragments.
-                        g.requestMtu(MTU)
+                        // does not reassemble fragments. A *refused* request is not a reason to
+                        // stop — it is a reason to carry on at the default, which is why this
+                        // falls through to discovery rather than waiting for a callback that will
+                        // never come.
+                        if (!g.requestMtu(MTU)) g.discoverServices()
                     } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
+                        onProgress(
+                            if (status == BluetoothGatt.GATT_SUCCESS) {
+                                "Disconnected"
+                            } else {
+                                "The link dropped (status $status)"
+                            },
+                        )
                         ready.trySend(false)
                         frames.close()
                     }
                 }
 
                 override fun onMtuChanged(g: BluetoothGatt, mtu: Int, status: Int) {
+                    onProgress("Discovering services")
                     g.discoverServices()
                 }
 
@@ -168,9 +256,17 @@ class Ring private constructor(
                     val service = g.getService(Protocol.SERVICE)
                     val notify = service?.getCharacteristic(Protocol.NOTIFY)
                     if (notify == null) {
+                        onProgress(
+                            if (service == null) {
+                                "Connected, but this device has no Oura service"
+                            } else {
+                                "The Oura service is there but its notify channel is not"
+                            },
+                        )
                         ready.trySend(false)
                         return
                     }
+                    onProgress("Subscribing")
                     g.setCharacteristicNotification(notify, true)
                     val cccd = notify.getDescriptor(CCCD)
                     if (cccd == null) {
@@ -218,7 +314,12 @@ class Ring private constructor(
                 }
             }
 
-            connection = runCatching { device.connectGatt(context, false, callback) }.getOrNull()
+            // `TRANSPORT_LE` explicitly. The default is AUTO, which on some phones tries
+            // BR/EDR first against a device that only speaks BLE — and fails in a way that looks
+            // like the ring is not there.
+            connection = runCatching {
+                device.connectGatt(context, false, callback, BluetoothDevice.TRANSPORT_LE)
+            }.getOrNull()
             val g = connection ?: return null
             val up = withTimeoutOrNull(CONNECT_MS) { ready.receive() } ?: false
             if (!up) {
@@ -235,6 +336,52 @@ class Ring private constructor(
             return Ring(g, writeChar, frames)
         }
 
+        /**
+         * Ask Android to bond, and wait for the answer.
+         *
+         * `createBond` is what raises the system pairing prompt. Without this the app relies on a
+         * GATT operation *triggering* the bond, which the platform does inconsistently — and on a
+         * phone where nothing appears, there is nothing for the user to accept and nothing on
+         * screen to explain why.
+         *
+         * The wait is long on purpose. The prompt is a notification the user has to find, and the
+         * ring has to be awake to answer: a minute is not generous, it is realistic.
+         */
+        @SuppressLint("MissingPermission")
+        private suspend fun bond(context: Context, device: BluetoothDevice): Boolean {
+            val done = Channel<Boolean>(Channel.CONFLATED)
+            val receiver = object : android.content.BroadcastReceiver() {
+                override fun onReceive(c: Context?, intent: android.content.Intent?) {
+                    if (intent?.action != BluetoothDevice.ACTION_BOND_STATE_CHANGED) return
+                    val which = @Suppress("DEPRECATION")
+                    intent.getParcelableExtra<BluetoothDevice>(BluetoothDevice.EXTRA_DEVICE)
+                    if (which?.address != device.address) return
+                    when (intent.getIntExtra(BluetoothDevice.EXTRA_BOND_STATE, -1)) {
+                        BluetoothDevice.BOND_BONDED -> done.trySend(true)
+                        BluetoothDevice.BOND_NONE -> done.trySend(false)
+                    }
+                }
+            }
+            val filter = android.content.IntentFilter(BluetoothDevice.ACTION_BOND_STATE_CHANGED)
+            runCatching {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    context.registerReceiver(
+                        receiver,
+                        filter,
+                        Context.RECEIVER_EXPORTED,
+                    )
+                } else {
+                    context.registerReceiver(receiver, filter)
+                }
+            }
+            return try {
+                if (!device.createBond()) return false
+                withTimeoutOrNull(BOND_MS) { done.receive() } ?: false
+            } finally {
+                runCatching { context.unregisterReceiver(receiver) }
+            }
+        }
+
         /** Whether Bluetooth is even on. Asked before a scan, so the screen can say so. */
         fun bluetoothOn(context: Context): Boolean = adapter(context)?.isEnabled == true
 
@@ -245,8 +392,29 @@ class Ring private constructor(
 
         /** The ring's own MTU, from the captures. */
         private const val MTU = 203
+
+        /** How long the system pairing prompt is waited on. A person has to find it first. */
+        private const val BOND_MS = 60_000L
     }
 
     /** A ring the scan saw. */
-    data class Found(val address: String, val name: String, val rssi: Int)
+    data class Found(
+        val address: String,
+        val name: String,
+        val rssi: Int,
+        /** Already bonded to this phone, so no pairing prompt is coming. */
+        val bonded: Boolean = false,
+    )
+
+    /**
+     * What a scan found, including what it found that was not a ring.
+     *
+     * The count of other devices is the difference between two very different failures: a radio
+     * that is not working, and a ring that is not awake. Both look like an empty list.
+     */
+    data class Scan(
+        val rings: List<Found>,
+        val otherDevices: Int,
+        val note: String?,
+    )
 }

@@ -7,6 +7,8 @@ import com.gios.brightoura.ble.Ring
 import com.gios.brightoura.ble.Session
 import com.gios.brightoura.ble.Sync
 import com.gios.brightoura.data.EventLog
+import com.gios.brightoura.data.Failures
+import com.gios.brightoura.data.Trace
 import com.gios.brightoura.data.Vault
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -35,6 +37,20 @@ class RingViewModel(app: Application) : AndroidViewModel(app) {
     private val _found = MutableStateFlow<List<Ring.Found>>(emptyList())
     val found: StateFlow<List<Ring.Found>> = _found.asStateFlow()
 
+    /**
+     * What the app is doing right now, in its own words.
+     *
+     * The whole reason this exists: a BLE conversation takes ten to sixty seconds, most of it
+     * waiting, and a screen that shows nothing during it is a screen somebody presses again. Every
+     * step of every attempt lands here as it happens.
+     */
+    private val _stage = MutableStateFlow<String?>(null)
+    val stage: StateFlow<String?> = _stage.asStateFlow()
+
+    /** The breadcrumb trail, for the screen that shows what just happened. */
+    private val _trail = MutableStateFlow<List<String>>(emptyList())
+    val trail: StateFlow<List<String>> = _trail.asStateFlow()
+
     private val _probe = MutableStateFlow<Session.Probe?>(null)
     val probe: StateFlow<Session.Probe?> = _probe.asStateFlow()
 
@@ -51,13 +67,22 @@ class RingViewModel(app: Application) : AndroidViewModel(app) {
 
     fun say(text: String?) { _said.value = text }
 
-    fun scan() = work {
+    fun scan() = work("scan for the ring") {
         if (!Ring.bluetoothOn(getApplication())) {
-            say("Bluetooth is off")
+            say("Bluetooth is off — turn it on and look again")
             return@work
         }
-        _found.value = withContext(Dispatchers.IO) { Ring.scan(getApplication()) }
-        say(if (_found.value.isEmpty()) "No rings answered. Wear it, or put it on the charger." else null)
+        Trace.begin("scan")
+        val result = withContext(Dispatchers.IO) {
+            Ring.scan(getApplication()) { line -> Trace.add(line); step(line) }
+        }
+        _found.value = result.rings
+        say(
+            result.note ?: "Found ${result.rings.size} ring${if (result.rings.size == 1) "" else "s"}",
+        )
+        if (result.rings.isEmpty()) {
+            fail("find the ring", "saw ${result.otherDevices} other device(s); ${result.note}")
+        }
     }
 
     /**
@@ -67,18 +92,19 @@ class RingViewModel(app: Application) : AndroidViewModel(app) {
      * app: firmware, serial and hardware id all answer before authentication. If this shows your
      * serial, everything after it is a question of keys rather than of radios.
      */
-    fun probe(found: Ring.Found) = work {
-        val result = withContext(Dispatchers.IO) { session.probe(found.address) }
+    fun probe(found: Ring.Found) = work("probe the ring") {
+        val result = withContext(Dispatchers.IO) { session.probe(found.address) { step(it) } }
         _probe.value = result
         say(
             when {
-                result == null -> "Could not connect. If the ring was just reset, accept the " +
-                    "Bluetooth pairing prompt first."
+                result == null -> "Could not connect. If a pairing prompt appeared, accept it and " +
+                    "try again — the ring refuses to talk on an unpaired link."
                 result.keyed -> "This ring already has a key — Oura's app has it, or a previous " +
                     "pairing here does."
                 else -> "Ready to pair."
             },
         )
+        if (result == null) fail("connect to the ring", "probe returned nothing")
     }
 
     /**
@@ -88,8 +114,10 @@ class RingViewModel(app: Application) : AndroidViewModel(app) {
      * not a one-line call: "already keyed" is not a failure, it is the ordinary state of a ring that
      * still belongs to Oura's app, and it needs a different sentence than a radio problem does.
      */
-    fun pair(found: Ring.Found) = work {
-        val outcome = withContext(Dispatchers.IO) { session.pair(found.address, found.name) }
+    fun pair(found: Ring.Found) = work("pair with the ring") {
+        val outcome = withContext(Dispatchers.IO) {
+            session.pair(found.address, found.name) { step(it) }
+        }
         say(
             when (outcome) {
                 is Session.Pairing.Paired -> if (outcome.featuresEnabled >= 3) {
@@ -107,13 +135,18 @@ class RingViewModel(app: Application) : AndroidViewModel(app) {
                 Session.Pairing.NoConnection -> "Lost the ring mid-pairing."
             },
         )
+        if (outcome !is Session.Pairing.Paired) {
+            fail("pair with the ring", outcome.javaClass.simpleName)
+        }
         _probe.value = null
     }
 
     /** Drain history into the log. The point of the whole app, and the thing to watch first. */
-    fun sync() = work {
+    fun sync() = work("sync the ring's history") {
         val outcome = withContext(Dispatchers.IO) {
-            session.authenticated { ring -> Sync(vault, log).run(ring) }
+            session.authenticated(onProgress = { step(it) }) { ring ->
+                Sync(vault, log).run(ring)
+            }
         }
         say(
             when (outcome) {
@@ -128,12 +161,15 @@ class RingViewModel(app: Application) : AndroidViewModel(app) {
                     "The ring refused our key. It has been re-onboarded somewhere else."
             },
         )
+        if (outcome !is Session.Authenticated.Ok) {
+            fail("sync the ring's history", outcome.javaClass.simpleName)
+        }
     }
 
     /** Battery, as a cheap proof that an authenticated session works at all. */
-    fun battery() = work {
+    fun battery() = work("read the battery") {
         val outcome = withContext(Dispatchers.IO) {
-            session.authenticated { ring ->
+            session.authenticated(onProgress = { step(it) }) { ring ->
                 ring.ask(com.gios.brightoura.ble.Protocol.battery())
                     ?.payload
                     ?.firstOrNull()
@@ -161,6 +197,11 @@ class RingViewModel(app: Application) : AndroidViewModel(app) {
         say("Key forgotten. The ring keeps it until it is reset again.")
     }
 
+    /** How many failure reports are waiting, and whether this build can send them at all. */
+    fun queuedReports(): Int = Failures.queued(getApplication())
+
+    fun canSendReports(): Boolean = Failures.canSend()
+
     fun refreshCounts() {
         _counts.value = log.counts()
     }
@@ -179,10 +220,36 @@ class RingViewModel(app: Application) : AndroidViewModel(app) {
      * Not a nicety: two overlapping GATT conversations with the same ring produce a connection that
      * fails in a way neither caller can explain.
      */
-    private fun work(block: suspend () -> Unit) = viewModelScope.launch {
+    private fun work(what: String, block: suspend () -> Unit) = viewModelScope.launch {
         if (_busy.value) return@launch
         _busy.value = true
-        runCatching { block() }.onFailure { say(it.message ?: it.javaClass.simpleName) }
+        _stage.value = "Starting"
+        runCatching { block() }.onFailure { thrown ->
+            say(thrown.message ?: thrown.javaClass.simpleName)
+            fail(what, thrown.stackTraceToString().take(1200))
+        }
         _busy.value = false
+        _stage.value = null
+        _trail.value = Trace.latest()
+    }
+
+    /** Say what is happening, now, on the screen. Called from the BLE layer as it goes. */
+    private fun step(line: String) {
+        _stage.value = line
+        _trail.value = Trace.latest()
+    }
+
+    /**
+     * File a failure, with the trail attached.
+     *
+     * Automatic rather than offered, and this app is the one place in the collection where that is
+     * right: it talks to hardware whose protocol came from somebody else's reverse engineering,
+     * against a ring generation nobody has tested it on. A connection that fails *is* the work,
+     * and the trail explaining it is gone the moment the screen changes. See
+     * [com.gios.brightoura.data.Failures] for what does and does not go in one.
+     */
+    private suspend fun fail(what: String, detail: String?) {
+        runCatching { Failures.file(getApplication(), what, detail) }
+        _trail.value = Trace.latest()
     }
 }
