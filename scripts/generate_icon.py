@@ -1,171 +1,175 @@
 #!/usr/bin/env python3
-"""
-Regenerate the LightTip launcher icon.
+"""Build BrightOura's launcher mark.
 
-The mark is a percent sign: the tip on one tab, and on the other, two parties with a
-line drawn between them. White line art on black, matching the icon language of the
-sibling Light Phone III tools.
+Part of the unified Bright* icon set. Every mark in the collection is drawn on
+the same 108x108 adaptive-icon canvas, inside the same 18..90 safe zone, at the
+same two stroke weights, in white on black and nothing else. The Light Phone
+III panel is black and white; a mark with a mid-tone in it dithers.
 
-Geometry is defined once, in the 108x108 adaptive-icon canvas, and emitted twice —
-as Android vector paths and as raster fallbacks. Everything sits inside the 18..90
-safe zone so no launcher mask can clip it.
+Edit MARK below and re-run. The vector outputs need nothing but the standard
+library. The raster outputs need Pillow and cairosvg, and are skipped with a
+message if those are missing, because the vectors are what actually ship on
+API 26 and up.
 
     python3 scripts/generate_icon.py
-
-Needs Pillow. Rewrites app/src/main/res/{drawable,mipmap-*}.
 """
-
-from __future__ import annotations
 
 import os
+import re
 
-from PIL import Image, ImageDraw
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-RES = os.path.join(os.path.dirname(__file__), "..", "app", "src", "main", "res")
+# ---- the mark ---------------------------------------------------------------
+# Each entry is (path data, stroke width, even-odd fill). A stroke width of 0
+# means the path is filled instead of stroked.
 
-CANVAS = 108
-SAFE = (18, 90)
-STROKE = 5.0
-RING_R = 9.5  # centreline radius; outer edge lands at RING_R + STROKE/2
-RING_A = (41.0, 41.0)
-RING_B = (67.0, 67.0)
-SLASH = ((73.0, 32.0), (35.0, 76.0))
+MARK = [
+    ('M25,54 A29,29 0 1 1 83,54 A29,29 0 1 1 25,54 Z M34,54 A20,20 0 1 0 74,54 A20,20 0 1 0 34,54 Z', 0, True),
+    ('M38,54 H44 L48,45 L54,64 L59,49 L63,54 H70', 4, False),
+]
 
-DENSITIES = {"mdpi": 48, "hdpi": 72, "xhdpi": 96, "xxhdpi": 144, "xxxhdpi": 192}
-SUPERSAMPLE = 8
+# Where the mark is written, and at what viewport. 108 is the adaptive-icon
+# canvas; 240 is the LightOS splash mark, which is the only place a LightOS
+# tool can show a mark of its own.
+TARGETS = [
+    ('app/src/main/res/drawable/ic_launcher_foreground.xml', 108),
+]
 
+# Legacy rasters: (path, pixels, circular mask, inset, transparent plate).
+# Inset shrinks the mark inside the plate - a legacy square icon gets no
+# launcher mask, so it needs the margin the mask would otherwise have given it.
+# A transparent plate is for an adaptive foreground layer, which is composited
+# over the plate rather than carrying one of its own.
+RASTERS = [
 
-def check_safe_zone() -> None:
-    lo, hi = SAFE
-    edge = STROKE / 2
-    extents = [
-        (RING_A[0] - RING_R - edge, RING_A[1] - RING_R - edge),
-        (RING_A[0] + RING_R + edge, RING_A[1] + RING_R + edge),
-        (RING_B[0] - RING_R - edge, RING_B[1] - RING_R - edge),
-        (RING_B[0] + RING_R + edge, RING_B[1] + RING_R + edge),
-        (SLASH[0][0] + edge, SLASH[0][1] - edge),
-        (SLASH[1][0] - edge, SLASH[1][1] + edge),
-    ]
-    for x, y in extents:
-        assert lo <= x <= hi and lo <= y <= hi, f"({x}, {y}) escapes the safe zone"
+]
 
+# Files that are the same in every app: the black plate, and the adaptive-icon
+# wrapper that points the launcher at the plate and the mark.
+STATIC = [
+    ('app/src/main/res/values/ic_launcher_background.xml', '<?xml version="1.0" encoding="utf-8"?>\n<resources>\n    <!-- Solid black plate for the adaptive icon. -->\n    <color name="ic_launcher_background">#000000</color>\n</resources>\n'),
+    ('app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml', '<?xml version="1.0" encoding="utf-8"?>\n<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">\n    <background android:drawable="@color/ic_launcher_background" />\n    <foreground android:drawable="@drawable/ic_launcher_foreground" />\n    <monochrome android:drawable="@drawable/ic_launcher_foreground" />\n</adaptive-icon>\n'),
+    ('app/src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml', '<?xml version="1.0" encoding="utf-8"?>\n<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">\n    <background android:drawable="@color/ic_launcher_background" />\n    <foreground android:drawable="@drawable/ic_launcher_foreground" />\n    <monochrome android:drawable="@drawable/ic_launcher_foreground" />\n</adaptive-icon>\n'),
+]
 
-def ring_path(cx: float, cy: float, r: float) -> str:
-    return (
-        f"M {cx - r},{cy} A {r},{r} 0 1 0 {cx + r},{cy} "
-        f"A {r},{r} 0 1 0 {cx - r},{cy} Z"
-    )
+STROKE = ('        android:fillColor="#00000000"\n'
+          '        android:strokeColor="#FFFFFF"\n'
+          '        android:strokeWidth="%g"\n'
+          '        android:strokeLineCap="round"\n'
+          '        android:strokeLineJoin="round" />')
 
-
-def write_vectors() -> None:
-    background = f"""<?xml version="1.0" encoding="utf-8"?>
-<!-- Pure black. On the Light Phone III's OLED these pixels are simply off. -->
-<vector xmlns:android="http://schemas.android.com/apk/res/android"
-    android:width="{CANVAS}dp"
-    android:height="{CANVAS}dp"
-    android:viewportWidth="{CANVAS}"
-    android:viewportHeight="{CANVAS}">
-    <path
-        android:fillColor="#000000"
-        android:pathData="M0,0h{CANVAS}v{CANVAS}h-{CANVAS}z" />
-</vector>
-"""
-
-    def stroked(path: str, filled_none: bool = True) -> str:
-        fill = '\n        android:fillColor="#00000000"' if filled_none else ""
-        return f"""    <path
-        android:pathData="{path}"
-        android:strokeColor="#FFFFFF"
-        android:strokeWidth="{STROKE:g}"{fill}
-        android:strokeLineCap="round"
-        android:strokeLineJoin="round" />"""
-
-    (sx, sy), (ex, ey) = SLASH
-    foreground = f"""<?xml version="1.0" encoding="utf-8"?>
+HEADER = '''<?xml version="1.0" encoding="utf-8"?>
 <!--
-  Generated by scripts/generate_icon.py — edit the geometry there, not here.
+  BrightOura launcher mark. One of the unified Bright* set: 108 canvas, 18..90
+  safe zone, white on black, no greys and no colour anywhere.
+
+  Generated by scripts/generate_icon.py - edit the geometry there, not here.
 -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
-    android:width="{CANVAS}dp"
-    android:height="{CANVAS}dp"
-    android:viewportWidth="{CANVAS}"
-    android:viewportHeight="{CANVAS}">
-{stroked(ring_path(*RING_A, RING_R))}
-{stroked(ring_path(*RING_B, RING_R))}
-{stroked(f"M {sx:g},{sy:g} L {ex:g},{ey:g}", filled_none=False)}
+    android:width="%(vp)sdp"
+    android:height="%(vp)sdp"
+    android:viewportWidth="%(vp)s"
+    android:viewportHeight="%(vp)s">
+%(paths)s
 </vector>
-"""
-
-    adaptive = """<?xml version="1.0" encoding="utf-8"?>
-<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
-    <background android:drawable="@drawable/ic_launcher_background" />
-    <foreground android:drawable="@drawable/ic_launcher_foreground" />
-    <monochrome android:drawable="@drawable/ic_launcher_foreground" />
-</adaptive-icon>
-"""
-
-    os.makedirs(os.path.join(RES, "drawable"), exist_ok=True)
-    os.makedirs(os.path.join(RES, "mipmap-anydpi-v26"), exist_ok=True)
-    with open(os.path.join(RES, "drawable", "ic_launcher_background.xml"), "w") as f:
-        f.write(background)
-    with open(os.path.join(RES, "drawable", "ic_launcher_foreground.xml"), "w") as f:
-        f.write(foreground)
-    for name in ("ic_launcher", "ic_launcher_round"):
-        with open(os.path.join(RES, "mipmap-anydpi-v26", f"{name}.xml"), "w") as f:
-            f.write(adaptive)
+'''
 
 
-def render(px: int, circular: bool) -> Image.Image:
-    s = SUPERSAMPLE
-    img = Image.new("RGBA", (CANVAS * s, CANVAS * s), (0, 0, 0, 255))
-    d = ImageDraw.Draw(img)
-    w = STROKE * s
+def scale_path(d, k):
+    """Multiply every number in a path by k.
 
-    def ring(cx: float, cy: float, r: float) -> None:
-        d.ellipse(
-            [(cx - r) * s - w / 2, (cy - r) * s - w / 2,
-             (cx + r) * s + w / 2, (cy + r) * s + w / 2],
-            fill=(255, 255, 255, 255),
-        )
-        d.ellipse(
-            [(cx - r) * s + w / 2, (cy - r) * s + w / 2,
-             (cx + r) * s - w / 2, (cy + r) * s - w / 2],
-            fill=(0, 0, 0, 255),
-        )
+    Safe on this data because every path is absolute and uniformly scaled, so
+    arc rx/ry scale with everything else. The large-arc and sweep flags are 0
+    or 1 and a naive pass would scale them into nonsense, so each arc command
+    is matched whole and its three flag fields copied through untouched."""
+    if k == 1.0:
+        return d
+    num = re.compile(r'-?\d*\.?\d+')
+    arc = re.compile(r'A\s*(-?[\d.]+)\s*,?\s*(-?[\d.]+)\s+(-?[\d.]+)\s+([01])\s*,?\s*([01])\s+')
 
-    ring(*RING_A, RING_R)
-    ring(*RING_B, RING_R)
-    (sx, sy), (ex, ey) = SLASH
-    d.line([(sx * s, sy * s), (ex * s, ey * s)], fill=(255, 255, 255, 255), width=int(w))
-    for x, y in (SLASH[0], SLASH[1]):  # round caps
-        d.ellipse([x * s - w / 2, y * s - w / 2, x * s + w / 2, y * s + w / 2],
-                  fill=(255, 255, 255, 255))
+    def one(s):
+        return ('%.3f' % (float(s) * k)).rstrip('0').rstrip('.')
 
-    # Crop to the 72x72 the launcher actually shows, so the legacy raster matches
-    # what the adaptive icon looks like under a mask.
-    lo, hi = SAFE
-    out = img.crop((lo * s, lo * s, hi * s, hi * s)).resize((px, px), Image.LANCZOS)
+    def plain(s):
+        return num.sub(lambda m: one(m.group(0)), s)
 
-    if circular:
-        mask = Image.new("L", (px * 4, px * 4), 0)
-        ImageDraw.Draw(mask).ellipse([0, 0, px * 4 - 1, px * 4 - 1], fill=255)
-        mask = mask.resize((px, px), Image.LANCZOS)
-        base = Image.new("RGBA", (px, px), (0, 0, 0, 0))
-        base.paste(out, (0, 0), mask)
-        out = base
-    return out
+    out, i = [], 0
+    for m in arc.finditer(d):
+        out.append(plain(d[i:m.start()]))
+        out.append('A%s,%s %s %s %s ' % (one(m.group(1)), one(m.group(2)),
+                                         m.group(3), m.group(4), m.group(5)))
+        i = m.end()
+    out.append(plain(d[i:]))
+    return ''.join(out)
 
 
-def write_rasters() -> None:
-    for dpi, px in DENSITIES.items():
-        folder = os.path.join(RES, f"mipmap-{dpi}")
-        os.makedirs(folder, exist_ok=True)
-        render(px, False).save(os.path.join(folder, "ic_launcher.png"))
-        render(px, True).save(os.path.join(folder, "ic_launcher_round.png"))
+def render(vp):
+    k = vp / 108.0
+    body = []
+    for d, w, even in MARK:
+        pd = scale_path(d, k)
+        if w == 0:
+            ft = '\n        android:fillType="evenOdd"' if even else ''
+            body.append('    <path\n        android:pathData="%s"\n'
+                        '        android:fillColor="#FFFFFF"%s />' % (pd, ft))
+        else:
+            body.append('    <path\n        android:pathData="%s"\n%s'
+                        % (pd, STROKE % (w * k)))
+    return HEADER % {'vp': vp, 'paths': '\n'.join(body)}
 
 
-if __name__ == "__main__":
-    check_safe_zone()
-    write_vectors()
-    write_rasters()
-    print("icon regenerated in", os.path.normpath(RES))
+def svg(inset=1.0, transparent=False):
+    m = (1 - inset) * 54
+    s = ['<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 108 108">']
+    if not transparent:
+        s.append('<rect width="108" height="108" fill="#000000"/>')
+    s += [
+         '<g transform="translate(%.3f,%.3f) scale(%s)">' % (m, m, inset)]
+    for d, w, even in MARK:
+        if w == 0:
+            fr = ' fill-rule="evenodd"' if even else ''
+            s.append('<path d="%s" fill="#FFFFFF"%s/>' % (d, fr))
+        else:
+            s.append('<path d="%s" fill="none" stroke="#FFFFFF" stroke-width="%s" '
+                     'stroke-linecap="round" stroke-linejoin="round"/>' % (d, w))
+    s.append('</g></svg>')
+    return ''.join(s)
+
+
+def write(rel, text):
+    p = os.path.join(ROOT, rel)
+    os.makedirs(os.path.dirname(p), exist_ok=True)
+    open(p, 'w').write(text)
+    print('wrote', rel)
+
+
+def rasters():
+    try:
+        import io
+        import cairosvg
+        from PIL import Image, ImageDraw
+    except ImportError:
+        print('Pillow/cairosvg not installed - skipped the rasters. The adaptive '
+              'icon is what ships on API 26 and up.')
+        return
+    for rel, px, round_, inset, transparent in RASTERS:
+        raw = cairosvg.svg2png(bytestring=svg(inset, transparent).encode(),
+                               output_width=px * 4, output_height=px * 4)
+        im = Image.open(io.BytesIO(raw)).convert('RGBA')
+        if round_:
+            mask = Image.new('L', im.size, 0)
+            ImageDraw.Draw(mask).ellipse([0, 0, im.size[0] - 1, im.size[1] - 1], fill=255)
+            im.putalpha(mask)
+        im = im.resize((px, px), Image.LANCZOS)
+        p = os.path.join(ROOT, rel)
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        im.save(p, 'WEBP' if rel.endswith('.webp') else 'PNG')
+        print('wrote', rel)
+
+
+if __name__ == '__main__':
+    for rel, vp in TARGETS:
+        write(rel, render(vp))
+    for rel, text in STATIC:
+        write(rel, text)
+    rasters()

@@ -1,4 +1,5 @@
 <div align="center">
+  <img src="docs/icon.png" alt="" width="72" /><br/>
   <h1>BrightOura</h1>
   <p><strong>Your Oura ring, read straight off the ring.</strong><br/>
   For the Light Phone III. No account, no cloud, no network.</p>
