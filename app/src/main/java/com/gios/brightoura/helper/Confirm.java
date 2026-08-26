@@ -60,6 +60,14 @@ public final class Confirm {
     /** How often to say something when nothing has changed, so a live transcript keeps moving. */
     private static final long HEARTBEAT_MS = 3_000L;
 
+    /**
+     * How long to wait for the Bluetooth service to be handed over.
+     *
+     * It arrives on a callback, so this is a wait rather than a call. Three seconds is far longer
+     * than it takes when the looper is running, and short enough to fail usefully when it is not.
+     */
+    private static final long SERVICE_WAIT_MS = 3_000L;
+
     public static void main(String[] args) {
         if (args.length < 1) {
             System.out.println("usage: Confirm <MAC> [budgetMs]");
@@ -74,21 +82,68 @@ public final class Confirm {
                 // Keep the default. A bad number is not worth failing a pairing over.
             }
         }
+        // **The looper has to actually run.**
+        //
+        // `createBond` came back false with an adapter that reported itself enabled, which is the
+        // shape of a `BluetoothAdapter` whose internal binder is still null. That binder does not
+        // arrive with the adapter: `IBluetoothManager` hands it over **asynchronously**, through a
+        // callback posted to this process's main looper. The looper was prepared and never run, so
+        // the callback sat in a queue nobody was reading, `mService` stayed null, and every
+        // operation that needs it — `removeBond`, `createBond` — politely returned false.
+        //
+        // So the work moves to a worker thread and the main thread does its job: loop, dispatch the
+        // callbacks, and quit when the worker is done.
+        // `systemMain()` prepares the main looper itself, but that is an implementation detail of
+        // somebody else's class and `Looper.loop()` below is not survivable without one. Asked for
+        // explicitly, and an "already prepared" complaint is the answer we wanted.
         try {
-            run(mac, budget);
-        } catch (Throwable t) {
-            // Printed rather than thrown: the adb shell service carries no exit status, so a stack
-            // trace on stdout is the only way this reports anything at all.
-            System.out.println("FAILED " + t.getClass().getName() + ": " + t.getMessage());
+            Looper.prepareMainLooper();
+        } catch (Throwable ignored) {
+            // Already prepared.
         }
+
+        // Framework setup stays on **this** thread, because `ActivityThread.systemMain()` prepares
+        // the main looper on whichever thread calls it — doing it on the worker would leave the
+        // callbacks queued against a looper the worker is not running either.
+        final Context context;
+        try {
+            context = systemContext();
+        } catch (Throwable t) {
+            System.out.println("FAILED could not build a context: "
+                    + t.getClass().getSimpleName() + ": " + t.getMessage());
+            return;
+        }
+
+        final String macFinal = mac;
+        final long budgetFinal = budget;
+        Thread worker = new Thread(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    Confirm.run(context, macFinal, budgetFinal);
+                } catch (Throwable t) {
+                    // Printed rather than thrown: the adb shell service carries no exit status, so
+                    // stdout is the only way this reports anything at all.
+                    System.out.println("FAILED " + t.getClass().getName() + ": " + t.getMessage());
+                } finally {
+                    Looper.getMainLooper().quit();
+                }
+            }
+        });
+        worker.setName("confirm");
+        worker.start();
+        // Dispatches the callback that carries the Bluetooth service. Returns when the worker quits.
+        Looper.loop();
     }
 
-    private static void run(String mac, long budget) throws Exception {
-        Looper.prepareMainLooper();
-
-        // `app_process` starts a bare VM: there is no Application, no ActivityThread, and so no
-        // Context to ask for a system service. `systemMain()` builds the one the system server's
-        // own tools use, and everything below hangs off it.
+    /**
+     * A context in a process that has none, with its main looper prepared and ready to be run.
+     *
+     * `app_process` starts a bare VM: no Application, no ActivityThread, and so nothing to ask for a
+     * system service. `systemMain()` builds the one the system server's own tools use — and prepares
+     * the main looper as it goes, which is why this must happen on the thread that will loop.
+     */
+    private static Context systemContext() throws Exception {
         Class<?> activityThread = Class.forName("android.app.ActivityThread");
         Object thread = activityThread.getMethod("systemMain").invoke(null);
         Context system = (Context) activityThread.getMethod("getSystemContext").invoke(thread);
@@ -104,6 +159,10 @@ public final class Confirm {
             System.out.println("note: no shell package context (" + t.getClass().getSimpleName()
                     + "), using the system one");
         }
+        return context;
+    }
+
+    static void run(Context context, String mac, long budget) throws Exception {
 
         BluetoothAdapter adapter = adapter(context);
         if (adapter == null) {
@@ -125,6 +184,29 @@ public final class Confirm {
         System.out.println("adapter state " + adapter.getState()
                 + " enabled=" + adapter.isEnabled()
                 + " setting bluetooth_on=" + globalInt(context, "bluetooth_on"));
+        // Wait for the service the callback delivers, and prove it with a call that needs it.
+        // `getBondedDevices` returns null — not an empty set — while the binder is missing, which
+        // makes it the cheapest honest test there is.
+        long until = System.currentTimeMillis() + SERVICE_WAIT_MS;
+        boolean ready = false;
+        while (System.currentTimeMillis() < until) {
+            try {
+                if (adapter.getBondedDevices() != null) {
+                    ready = true;
+                    break;
+                }
+            } catch (Throwable ignored) {
+                // Not up yet.
+            }
+            sleep(200);
+        }
+        System.out.println("bluetooth service " + (ready ? "reachable" : "NOT reachable"));
+        if (!ready) {
+            System.out.println("FAILED the adapter exists but its service never arrived — nothing "
+                    + "that changes a bond can work from here");
+            return;
+        }
+
         BluetoothDevice device = adapter.getRemoteDevice(mac);
         System.out.println("device " + mac + " state " + name(device.getBondState()));
 

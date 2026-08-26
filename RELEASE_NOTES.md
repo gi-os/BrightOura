@@ -1,32 +1,44 @@
-## BrightOura v0.26 — the process had nothing pointing at the Bluetooth binder
+## BrightOura v0.27 — the looper was prepared and never run
 
-Three routes to the adapter, all returning **null without throwing**, on a phone where the
-`bluetooth_manager` binder was present and `BluetoothManager` itself constructed fine. That
-combination is the whole diagnosis:
+Real progress first: v0.26's fix worked exactly as intended.
 
 ```
-bluetooth_manager binder: present
+service manager installed
 manager: ok
-manager.getAdapter(): null
-getDefaultAdapter(): null
-createAdapter(): null
+manager.getAdapter(): ok
+adapter state 12 enabled=true
 ```
 
-Since Android 13 the Bluetooth stack is a mainline module, and `BluetoothAdapter.createAdapter()`
-does not look the binder up itself — it asks `BluetoothFrameworkInitializer.getBluetoothServiceManager()`
-for it. **That object is installed by `ActivityThread` while an application starts.** The helper runs
-under `app_process` as a plain main class, which is not an application, so the setter is never
-called, the manager is null, and every route politely reports nothing. The binder was reachable the
-entire time; there was simply nothing pointing at it.
+An adapter, in a process that had never had one. And then:
 
-So the helper now installs it, exactly as application startup would: construct the service manager,
-hand it to the initializer, then try the three routes again. Being installed twice counts as success
-— the framework throws `IllegalStateException` for a second call, which means somebody else got there
-first, which is the state we wanted anyway.
+```
+removeBond false
+createBond false
+state NONE
+```
 
-Both plausible package names are tried, the constructor is taken as declared because it is not public
-API, and every step says what happened — including "no BluetoothServiceManager class on this build",
-which would mean this route is closed and the next one is the raw `IBluetooth` binder.
+**False, from an adapter that reports itself enabled.** That is the signature of a
+`BluetoothAdapter` whose internal binder is still null — and that binder does not arrive with the
+adapter. `IBluetoothManager` hands it over **asynchronously**, through a callback posted to this
+process's main looper.
 
-Also printed now: whether a `bluetooth` service is registered alongside `bluetooth_manager`, because
-that is the binder the fallback would use.
+The looper was prepared and never run. So the callback sat in a queue nobody was reading, the
+service stayed null, and every operation that needs it returned false — politely, as usual, without
+throwing.
+
+**The main thread now does its job.** Framework setup happens there (it has to: `systemMain()`
+prepares the main looper on whichever thread calls it), the pairing work moves to a worker thread,
+and the main thread loops — dispatching the callback that carries the service — until the worker is
+done.
+
+**And the service is proven before anything is asked of it.** `getBondedDevices()` returns null,
+not an empty set, while the binder is missing, which makes it the cheapest honest test available:
+
+```
+bluetooth service reachable
+device …  state NONE
+createBond true
+```
+
+If it says **NOT reachable** the helper stops there and says so, rather than reporting three
+separate false returns from three operations that never had a chance.
