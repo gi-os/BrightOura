@@ -1,3 +1,33 @@
+## BrightOura v0.11 — three more ways at it
+
+Reads came back empty: the ring pushes its replies and will not hand them over when asked. So this
+release stops trying to be clever about the transport and goes after the three things still unknown.
+
+**1. Listening without subscribing.** Subscribing is two halves — the phone is told to deliver
+notifications from a characteristic, and the *ring* is told to send them, which is the descriptor
+write that needs encryption. This does the first half alone. A strictly compliant peripheral sends
+nothing until its descriptor says otherwise, but firmware written against exactly one app's
+behaviour often pushes regardless — and this protocol was never meant to be spoken by anybody else.
+One local call, no permission, no bond, and it either works or it does not.
+
+**2. Pairing over LE only.** `createBond()` uses `TRANSPORT_AUTO`, and on a stack that also speaks
+classic Bluetooth that can mean the phone attempts a **classic pairing against a device that only
+speaks LE** — which is exactly "pairing… pairing… and then nothing", because the classic attempt has
+nobody to talk to and gives up in silence. `createBond(TRANSPORT_LE)` has existed since Android 6 and
+has never been public API; it is the standard workaround for this symptom, and it is reached by
+reflection, reported either way, and falls back to the ordinary call.
+
+That this phone's only bonds are a pair of headphones and a speaker — both classic — is consistent
+with a stack that has never successfully completed an LE bond, which is what makes this the most
+promising of the three.
+
+**3. The whole GATT table.** Every service, characteristic, property and descriptor the ring
+advertises, in the diagnosis, ready to paste. **Nobody has dumped a Ring 4** — the protocol notes
+were written against a Ring 3 and a Ring 5 — and every remaining idea depends on what is actually
+there: a second characteristic that answers reads, a service nobody documented, a characteristic
+whose properties say `read` where the notes say `notify`. None of that can be guessed at, and all of
+it is one press away now.
+
 ## BrightOura v0.10 — it was my own fallback that closed the app
 
 **"It closed the app" was this app leaving.** v0.8 opened a Bluetooth screen automatically when a

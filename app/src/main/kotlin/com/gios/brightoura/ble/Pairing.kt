@@ -235,6 +235,44 @@ object Pairing {
         else -> "type $variant"
     }
 
+    /**
+     * Bond over LE explicitly, by reflection, because the public call will not let you say.
+     *
+     * `createBond()` uses `TRANSPORT_AUTO`. On a stack that also speaks classic Bluetooth that can
+     * mean the phone attempts **classic pairing against a device that only speaks LE** — which
+     * produces exactly the symptom this phone shows from its own Bluetooth screen: "pairing…
+     * pairing…" and then nothing, because the classic attempt has nobody to talk to and times out
+     * without a word.
+     *
+     * `createBond(int transport)` has existed since Android 6 and has never been public. It is the
+     * standard workaround for this symptom. Being reflection it is written to fail quietly: if the
+     * method is gone or blocked by the hidden-API policy, that is reported and the caller falls
+     * back to the ordinary call.
+     */
+    @SuppressLint("MissingPermission")
+    fun bondOverLe(device: BluetoothDevice, onProgress: (String) -> Unit): Boolean {
+        val method = runCatching {
+            BluetoothDevice::class.java.getMethod("createBond", Int::class.javaPrimitiveType)
+        }.getOrNull()
+        if (method == null) {
+            Trace.add("createBond(transport) is not reachable on this build")
+            onProgress("This phone will not let an app choose the pairing transport")
+            return false
+        }
+        val started = runCatching { method.invoke(device, TRANSPORT_LE) as? Boolean }
+            .onFailure {
+                Trace.add("createBond(LE) threw ${it.javaClass.simpleName}")
+                onProgress("The phone refused an LE-only pairing request")
+            }
+            .getOrNull() ?: false
+        Trace.add("createBond(LE) started=$started")
+        if (started) onProgress("Pairing over LE only — no classic attempt to time out")
+        return started
+    }
+
+    /** `BluetoothDevice.TRANSPORT_LE`. Public as a constant; only the overload taking it is not. */
+    private const val TRANSPORT_LE = 2
+
     private const val SETTINGS = "com.android.settings"
     private const val LIGHTOS = "com.lightos"
     private const val DIALOG = "com.android.settings.bluetooth.BluetoothPairingDialog"

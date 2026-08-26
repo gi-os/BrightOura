@@ -93,6 +93,29 @@ class Ring private constructor(
         return null
     }
 
+    /**
+     * Everything in the ring's GATT table: services, characteristics, properties, descriptors.
+     *
+     * Nobody has this for a Ring 4 — the protocol notes were written against a Ring 3 and a Ring 5,
+     * and every idea left depends on what is actually there. A second characteristic that answers
+     * reads, a service nobody documented, a characteristic whose properties say `read` where the
+     * notes say `notify`: any of those changes what is possible, and none can be guessed.
+     */
+    @SuppressLint("MissingPermission")
+    fun gattDump(): String = buildString {
+        gatt.services.forEach { service ->
+            appendLine("service ${service.uuid}")
+            service.characteristics.forEach { characteristic ->
+                append("  char ${characteristic.uuid} ")
+                appendLine(properties(characteristic))
+                characteristic.descriptors.forEach { descriptor ->
+                    appendLine("    desc ${descriptor.uuid}")
+                }
+            }
+        }
+        if (isEmpty()) appendLine("no services at all — discovery found nothing")
+    }
+
     /** What the two characteristics say they can do, for the screen that has to explain a failure. */
     fun capabilitiesLine(): String = buildString {
         append("write ")
@@ -283,6 +306,20 @@ class Ring private constructor(
              * read rather than pushed. Slower, and it works on a phone that cannot bond.
              */
             subscribe: Boolean = false,
+            /**
+             * Turn notifications on *locally* without writing the descriptor.
+             *
+             * The compliant way to subscribe is to write the client-characteristic-configuration
+             * descriptor, and that write is what needs an encrypted link. This does only the half
+             * that lives on the phone: the stack is told to deliver notifications from that
+             * characteristic if any arrive.
+             *
+             * Whether any do is the ring's business. A strictly compliant peripheral sends nothing
+             * until its CCCD says otherwise — but firmware written against one app's behaviour
+             * often pushes regardless, and this protocol was never meant to be spoken by anybody
+             * else. One local call to find out.
+             */
+            listenWithoutSubscribing: Boolean = true,
         ): Ring? {
             val adapter = adapter(context) ?: return null
             val device: BluetoothDevice = runCatching { adapter.getRemoteDevice(address) }
@@ -355,8 +392,19 @@ class Ring private constructor(
                     val service = g.getService(Protocol.SERVICE)
                     val notify = service?.getCharacteristic(Protocol.NOTIFY)
                     if (!subscribe && service != null && notify != null) {
-                        // Straight through. Nothing here needs an encrypted link, so nothing here
-                        // can be blocked by a bond that will not finish.
+                        // The local half of subscribing: needs nothing from the ring, so nothing
+                        // can refuse it. See [listenWithoutSubscribing].
+                        if (listenWithoutSubscribing) {
+                            val on = runCatching { g.setCharacteristicNotification(notify, true) }
+                                .getOrDefault(false)
+                            onProgress(
+                                if (on) {
+                                    "Listening without subscribing — the ring may push anyway"
+                                } else {
+                                    "The phone would not listen without a subscription"
+                                },
+                            )
+                        }
                         onProgress("Ready (reading replies rather than subscribing)")
                         if (opened.compareAndSet(false, true)) ready.trySend(true)
                         return
@@ -545,7 +593,11 @@ class Ring private constructor(
             // or put it on screen, and both of those live there.
             val watcher = Pairing.watch(context, onProgress)
             return try {
-                val asked = runCatching { device.createBond() }.getOrDefault(false)
+                // LE first. The plain call may try classic pairing against a device that only
+                // speaks LE, which is exactly the "pairing… pairing… nothing" this phone shows from
+                // its own Bluetooth screen. See [Pairing.bondOverLe].
+                val asked = Pairing.bondOverLe(device, onProgress) ||
+                    runCatching { device.createBond() }.getOrDefault(false)
                 if (!asked) {
                     // False means the request itself was refused — a missing permission, or a
                     // device the adapter will not bond with. Not a timeout, and worth saying so

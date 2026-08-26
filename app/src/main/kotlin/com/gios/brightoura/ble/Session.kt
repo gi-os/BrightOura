@@ -54,6 +54,7 @@ class Session(private val context: Context, private val vault: Vault) {
             val battery = ring.ask(Protocol.battery())
             Probe(
                 link = ring.capabilitiesLine(),
+                gatt = ring.gattDump(),
                 firmware = firmware?.let { text(it.payload) },
                 serial = serial?.let { text(it.payload) },
                 hardware = hardware?.let { text(it.payload) },
@@ -209,6 +210,14 @@ class Session(private val context: Context, private val vault: Vault) {
          * bond, "not subscribed" is the whole story and every empty field below follows from it.
          */
         val link: String,
+        /**
+         * The whole GATT table.
+         *
+         * Kept because every idea left depends on what is actually in this ring, and nobody has
+         * dumped a Ring 4. It goes into the diagnosis rather than onto the screen — it is thirty
+         * lines of UUIDs, which is data for whoever is solving this and noise for anybody else.
+         */
+        val gatt: String,
         val firmware: String?,
         val serial: String?,
         val hardware: String?,

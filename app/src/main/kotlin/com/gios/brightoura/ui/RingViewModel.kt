@@ -307,6 +307,11 @@ class RingViewModel(app: Application) : AndroidViewModel(app) {
             appendLine("bonded devices:")
             Ring.bondedNames(app).forEach { appendLine("  $it") }
             appendLine()
+            _probe.value?.gatt?.takeIf { it.isNotBlank() }?.let {
+                appendLine("gatt table:")
+                appendLine(it.trimEnd())
+                appendLine()
+            }
             appendLine("last attempt:")
             appendLine(Trace.text())
         }

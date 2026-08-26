@@ -285,6 +285,14 @@ fun SetupScreen(vm: RingViewModel, onDone: () -> Unit) {
                     sub = p.link,
                     detail = if (p.link.contains("NOT subscribed")) "NO PUSH" else "OK",
                 )
+                MenuRow(
+                    label = "What the ring offers",
+                    sub = p.gatt.lineSequence().count { it.isNotBlank() }.let {
+                        "$it lines — in the diagnosis, ready to paste"
+                    },
+                    detail = "COPY",
+                    onClick = { vm.copyDiagnosis() },
+                )
                 MenuRow(label = "Serial", detail = p.serial ?: "—")
                 MenuRow(label = "Hardware", detail = p.hardware ?: "—")
                 MenuRow(label = "Firmware", detail = p.firmware ?: "—")
