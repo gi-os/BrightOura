@@ -1,3 +1,31 @@
+## BrightOura v0.13 — the commands worth running, and the one that does not exist
+
+**There is no adb command that pairs a device.** Not on this phone, not on any of them: the platform
+exposes enabling Bluetooth, disabling it, and asking to be discoverable, and nothing at all that
+starts or confirms a bond. Pairing on an unrooted phone goes through the system's own UI, which is
+the thing that is broken here. Every "pair over adb" recipe on the internet is either rooted
+`service call` against transaction numbers that move between Android versions, or it is enabling the
+adapter and calling that pairing.
+
+**So this release ships the four commands that are actually worth running.** They do not change
+anything; they say *why* the bond fails, which is the one thing nobody has yet:
+
+```
+dumpsys bluetooth_manager | grep -A5 -i "bond|20160C"
+logcat -b all -v time | grep -i "bluetooth|smp|bond|pair"
+cmd companiondevice list 0
+dumpsys bluetooth_manager | grep -i "le|transport" | head -40
+```
+
+Run the first before and after an attempt and the ring's bond state is the line that matters. The
+second, started before a pairing and stopped after it, is the stack's own account of what it tried:
+whether the pairing reaches the security manager at all, and what it says when it gives up. That is
+the difference between "this phone cannot complete an LE bond" — a fault to report to Light, with
+the iPad as the second case — and something still fixable from here.
+
+On the clipboard rather than run from the app: this app has no adb of its own, BrightControl does,
+and a command somebody pastes deliberately is a command somebody can read first.
+
 ## BrightOura v0.12 — a refused read, and three channels nobody has written about
 
 **The GATT dump changed the picture, and it also caught a bug of mine.**

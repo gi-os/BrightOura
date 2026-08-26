@@ -336,6 +336,42 @@ class RingViewModel(app: Application) : AndroidViewModel(app) {
         say("Key forgotten. The ring keeps it until it is reset again.")
     }
 
+    /**
+     * The shell commands worth running when the phone itself is the problem.
+     *
+     * There is **no supported adb command that pairs a device** — the platform exposes enabling,
+     * disabling and making itself discoverable, and nothing that starts or confirms a bond. What
+     * shell *can* do is say why one failed, which is the thing nobody has yet: whether the
+     * pairing even reaches the security manager, and what the stack says when it gives up.
+     *
+     * On the clipboard rather than run from here: this app has no adb of its own, BrightControl
+     * does, and a command somebody pastes deliberately is a command somebody can read first.
+     */
+    fun copyShellCommands() {
+        val text = """
+            # 1. What the Bluetooth stack thinks is happening. Run it, then try to pair, then run
+            #    it again — the bond state of the ring is the line that matters.
+            dumpsys bluetooth_manager | grep -A5 -i "bond\|20160C"
+
+            # 2. The stack's own account of the failure. Start this, try to pair, stop it.
+            logcat -b all -v time | grep -i "bluetooth\|smp\|bond\|pair"
+
+            # 3. Which companion associations exist, since one was made for the ring.
+            cmd companiondevice list 0
+
+            # 4. Whether the phone will even talk about LE pairing.
+            dumpsys bluetooth_manager | grep -i "le\|transport" | head -40
+        """.trimIndent()
+        runCatching {
+            val clipboard = getApplication<Application>()
+                .getSystemService(android.content.ClipboardManager::class.java)
+            clipboard?.setPrimaryClip(
+                android.content.ClipData.newPlainText("BrightOura shell", text),
+            )
+        }
+        say("Copied. Run them from BrightControl's ADB screen — none of them change anything.")
+    }
+
     /** Whether a ring's advertised name says it has never been keyed. See [Session.looksUnkeyed]. */
     fun looksUnkeyed(name: String?): Boolean = session.looksUnkeyed(name)
 

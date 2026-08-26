@@ -358,6 +358,14 @@ fun SetupScreen(vm: RingViewModel, onDone: () -> Unit) {
             Rule()
             SectionLabel("WHEN IT WILL NOT PAIR")
             MenuRow(
+                label = "Copy the shell commands",
+                detail = "COPY",
+                sub = "No adb command can pair a device — the platform does not expose one. These " +
+                    "four say why a pairing failed, which nobody has yet. Run them from " +
+                    "BrightControl's ADB screen; none of them change anything.",
+                onClick = { vm.copyShellCommands() },
+            )
+            MenuRow(
                 label = "Copy the diagnosis",
                 detail = "COPY",
                 sub = "Adapter, permissions, bond states, the association, and the last attempt " +
