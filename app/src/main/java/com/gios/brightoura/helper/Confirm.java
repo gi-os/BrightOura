@@ -105,17 +105,38 @@ public final class Confirm {
                     + "), using the system one");
         }
 
+        // Two routes to the adapter, because in a bare `app_process` neither is reliable on its
+        // own: the manager wants a context with a real ActivityThread behind it, and the static
+        // default wants a process the framework has initialised. Whichever answers, answers.
+        BluetoothAdapter adapter = null;
         BluetoothManager manager =
                 (BluetoothManager) context.getSystemService(Context.BLUETOOTH_SERVICE);
-        if (manager == null) {
-            System.out.println("FAILED no bluetooth service");
+        if (manager != null) {
+            adapter = manager.getAdapter();
+        }
+        if (adapter == null) {
+            adapter = BluetoothAdapter.getDefaultAdapter();
+            if (adapter != null) System.out.println("note: using the default adapter");
+        }
+        if (adapter == null) {
+            System.out.println("FAILED no bluetooth adapter in this process");
             return;
         }
-        BluetoothAdapter adapter = manager.getAdapter();
-        if (adapter == null || !adapter.isEnabled()) {
-            System.out.println("FAILED bluetooth is off");
-            return;
-        }
+
+        // **What this does not do is refuse to continue.**
+        //
+        // This used to stop here on `!isEnabled()`, and that guard was the only thing standing
+        // between a phone with Bluetooth plainly on and a bond: in a process with no ActivityThread
+        // the adapter cannot always reach the Bluetooth service, and when it cannot, `isEnabled()`
+        // answers **false** rather than throwing. A defensive check that cannot tell the difference
+        // between "off" and "cannot see" is worse than no check — the operations below fail with
+        // their own reasons if Bluetooth really is off, and those reasons are true.
+        //
+        // The state is printed instead, next to a reading nobody can get wrong: the global setting,
+        // which says what the *phone* thinks and is readable by anyone.
+        System.out.println("adapter state " + adapter.getState()
+                + " enabled=" + adapter.isEnabled()
+                + " setting bluetooth_on=" + globalInt(context, "bluetooth_on"));
         BluetoothDevice device = adapter.getRemoteDevice(mac);
         System.out.println("device " + mac + " state " + name(device.getBondState()));
 
@@ -196,6 +217,22 @@ public final class Confirm {
             System.out.println(method + " " + result);
         } catch (Throwable t) {
             System.out.println(method + " unavailable (" + t.getClass().getSimpleName() + ")");
+        }
+    }
+
+    /**
+     * A global setting, read straight out of the provider.
+     *
+     * A second opinion on whether Bluetooth is on, from a source that does not depend on this
+     * process having a working adapter. `1` with an adapter reporting disabled is the exact shape of
+     * the bug this replaced.
+     */
+    private static String globalInt(Context context, String key) {
+        try {
+            return String.valueOf(
+                    android.provider.Settings.Global.getInt(context.getContentResolver(), key, -1));
+        } catch (Throwable t) {
+            return "unreadable";
         }
     }
 
