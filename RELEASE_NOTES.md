@@ -1,40 +1,37 @@
-## BrightOura v0.21 — pairing goes through the shell, because nothing else here can do it
+## BrightOura v0.22 — the decoding layer, with the guesses labelled as guesses
 
-Five releases spent on the app side of this, and the app side was never where it could be fixed.
-Every route the platform offers ends at the same activity:
+Nothing on screen yet. This is the part underneath: the sync loop has been keeping every frame the
+ring hands over as raw bytes, and this is what turns those bytes into numbers — written as plain
+Kotlin with no Android in it, so it can be run against hand-built frames on a desk rather than
+against a ring that only has one night per night.
 
-- **Awake**, the request opens `com.android.settings/.bluetooth.BluetoothPairingDialog`. LightOS's
-  fragment builds a **null** dialog for the consent variant and dies in `DialogFragment.prepareDialog`.
-- **Asleep**, the request is posted as a notification instead — v0.20 got that far, and the
-  notification really is posted, with a "Pair & connect" button, and this app's listener really does
-  press it. That button fires `ACTION_PAIRING_DIALOG`, whose only job is to start the same activity.
-  It crashed the pairing service too.
-- **The companion-association route** (v0.16–v0.19) never flipped `canBondWithoutDialog`, with the
-  exact address, a plain association and under a second between approval and the bond.
+**Three levels of confidence, kept apart on purpose:**
 
-Three routes, one dead end. There is no fourth.
+- **Documented.** The frame envelope, the event-tag table and the meaning of the timestamp come from
+  the Ring 4 protocol notes. Several events pack into one notification, `tag | length | payload`,
+  and the first four bytes of a payload are the timestamp.
+- **Validated by somebody else's overnight capture.** Inter-beat intervals (`0x60`, `0x80`) and HRV
+  (`0x5D`) — an interval of 800 ms is 75 bpm, and the ring's own quality rides in the same pair of
+  bytes without disturbing it. These produce real units.
+- **Inferred, and marked as such.** Temperature and step counts are known to exist in their events
+  and known roughly what they should read; nobody has written down the byte layout. They are decoded
+  to the most plausible reading with `inferred = true` on the reading itself, so a screen can show
+  them differently and nobody builds a habit on a scaling error.
 
-**So: `setPairingConfirmation`, which answers a request with no UI at all.** Its permission is
-`BLUETOOTH_PRIVILEGED` — `signature|privileged`, unreachable for a sideloaded app and always will
-be. But `com.android.shell` holds it granted, along with `BLUETOOTH_STACK`, and BrightControl has
-held an adb shell since its first release.
+**A frame nothing can read is counted, never invented** — stored, named ("Sleep summary (2)", not
+"0x4c"), and reported as `unread`, which is how we know which decoder to write next. And because
+the raw log keeps everything, a better decoder is a re-parse rather than another night of waiting.
 
-**Pair through BrightControl** hands over one line — `confirm pairing <MAC>` — and BrightControl
-(v3.43 or newer) rebuilds the command itself:
+**The day rollup refuses to flatter you.** A resting heart rate is the tenth percentile rather than
+the minimum — one dropped beat reads as 38 bpm, and reporting that as a resting rate tells somebody
+something about their heart that a bad contact told them. Fewer than thirty beats gives no resting
+rate at all. Steps are summed, because each event is a count since the last one. Temperature is
+reported as deviation from your own median, because 33.5 °C is not a fact anybody can use.
 
-```
-sh -c 'CLASSPATH=<this app's own APK> app_process / com.gios.brightoura.helper.Confirm <MAC> 24000'
-```
+**No sleep score.** Oura's scores are the output of a model this app does not have, and an invented
+one that lands eleven points off the official app is worse than none: it looks like the same thing
+and is not. What is here is measurement — beats, degrees, steps, and the hours the ring believed it
+was worn.
 
-The class is new here, and it is the only new code in this release: it asks for the bond, then
-answers the request it raised, in one loop as one uid. Confirming from one process while bonding
-from another is a race across a consent screen, and there was nothing to be gained by keeping them
-apart — a bond belongs to the phone, not to whoever asked for it. It clears a half-made bond first,
-because one of those poisons every attempt after it, and it reports each state change so a failure
-says which step failed.
-
-Nothing is dropped in shared storage and no dex ships: the helper lives inside this APK, which is
-world-readable, and `app_process` is pointed straight at it. Nothing is left behind afterwards.
-
-The old routes are still on the screen, one row down, honestly labelled — they are the ones that
-would work on a phone whose pairing dialog is not broken.
+Twenty-one tests on the decoders and thirteen on the rollup, all of them run against bytes and lists
+built by hand.
