@@ -51,8 +51,25 @@ import android.os.Looper;
  */
 public final class Confirm {
 
-    /** How long to keep answering. The request stands for about thirty seconds; this covers it. */
-    private static final long DEFAULT_BUDGET_MS = 24_000L;
+    /**
+     * How long to keep answering.
+     *
+     * Was 24 seconds, on the reasoning that the request stands for about thirty. That is true of the
+     * *request* and says nothing about the **bond**, which is what happens next: light-reports shows
+     * `RESULT gave up in state BONDING (request was answered)` — the confirmation went through and
+     * the pairing was still completing when the clock ran out. Giving up there throws away the only
+     * attempt that has ever got this far.
+     */
+    private static final long DEFAULT_BUDGET_MS = 55_000L;
+
+    /**
+     * Extra time granted only while the state is BONDING.
+     *
+     * BONDING is not waiting, it is progress: the confirmation has been accepted and the two ends
+     * are exchanging keys. A deadline that fires through it is a deadline interrupting the thing it
+     * was waiting for, so the clock stops mattering as long as the state keeps saying so.
+     */
+    private static final long BONDING_GRACE_MS = 45_000L;
 
     /** Between attempts. The request can arrive several seconds after the bond is asked for. */
     private static final long POLL_MS = 500L;
@@ -230,6 +247,7 @@ public final class Confirm {
         System.out.println("createBond " + asked);
 
         long deadline = System.currentTimeMillis() + budget;
+        boolean extended = false;
         boolean confirmed = false;
         int last = -1;
         long spoke = System.currentTimeMillis();
@@ -271,10 +289,29 @@ public final class Confirm {
                 System.out.println("RESULT refused after confirming");
                 return;
             }
+            // **Bonding earns extra time, once.** Reaching the deadline mid-bond is the one case
+            // where stopping is worse than waiting: the request has been answered and the keys are
+            // being exchanged, and nothing else this helper does is as valuable as letting that
+            // finish.
+            if (!extended
+                    && state == BluetoothDevice.BOND_BONDING
+                    && System.currentTimeMillis() > deadline - POLL_MS * 2) {
+                extended = true;
+                deadline += BONDING_GRACE_MS;
+                System.out.println("still bonding — waiting " + (BONDING_GRACE_MS / 1000)
+                        + "s longer rather than interrupting it");
+            }
             sleep(POLL_MS);
         }
-        System.out.println("RESULT gave up in state " + name(device.getBondState())
+        int finalState = device.getBondState();
+        System.out.println("RESULT gave up in state " + name(finalState)
                 + (confirmed ? " (request was answered)" : " (no request ever arrived)"));
+        if (finalState == BluetoothDevice.BOND_BONDING) {
+            // Said plainly because it changes what to do next: the bond is not this process's to
+            // finish, and it may well complete after this exits. Nothing here cancels it.
+            System.out.println("the bond is still in progress and is not cancelled — it may "
+                    + "complete on its own. Check the ring before starting over.");
+        }
     }
 
     /**
