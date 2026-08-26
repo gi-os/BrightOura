@@ -1,35 +1,35 @@
-## BrightOura v0.29 — the bond was in flight when the clock killed it
-
-The furthest this has ever got, from tonight's transcript:
+## BrightOura v0.30 — why the bond collapsed, in words
 
 ```
-createBond true
-state BONDING
 setPairingConfirmation true
-RESULT gave up in state BONDING (request was answered)
-Killed
+state NONE
+RESULT refused after confirming
 ```
 
-Every hard part worked. `createBond` went through — the shell-attributed adapter from v0.28 was the
-missing piece — the platform raised its consent request, and **the shell answered it**. The bond was
-still completing when the budget expired, and the budget then killed the only attempt that has ever
-reached this point.
+The confirmation went through and the bond then fell apart. That was an honest answer to the wrong
+question: *why* it fell apart is carried on the bond-state broadcast as `EXTRA_REASON`, a number this
+helper had never asked for. The state read back afterwards is a bare NONE, which is why "refused
+after confirming" was the end of the story instead of the start of one.
 
-That budget was 24 seconds, chosen because a pairing *request* stands for about thirty. Which is true
-of the request and says nothing about the **bond**, which is what happens after it is answered.
+The reasons point in completely different directions:
 
-**Fifty-five seconds now, and BONDING earns more.** Reaching the deadline mid-bond is the one case
-where stopping is worse than waiting: the request has been accepted and the two ends are exchanging
-keys. So the state buys another forty-five seconds, once — a deadline that fires through BONDING is a
-deadline interrupting the thing it was waiting for.
+| reason | what it means |
+|---|---|
+| authentication failed | the keys did not match |
+| the ring rejected it | it does not want to pair with this phone |
+| the ring went away | out of range, asleep, or busy with another phone |
+| authentication timed out | nobody answered in time |
+| **too many failed attempts** | **the stack is refusing for now** |
 
-**And giving up no longer implies the bond is dead.** Nothing here cancels it, so it says so:
+Only the last one has a remedy, and after a dozen-plus attempts tonight it is the one I would bet on.
+When it appears, the helper says what to do rather than leaving it to be guessed:
 
 ```
-the bond is still in progress and is not cancelled — it may complete on its own.
-Check the ring before starting over.
+the stack is refusing because too many pairings have failed recently. Switch
+Bluetooth off and on — that clears the count — and leave it a minute before
+trying again.
 ```
 
-Worth taking literally. If the last attempt reached BONDING, the phone may already be paired with the
-ring — check before starting over, because starting over clears a half-made bond that might have
-finished.
+**And the transcript no longer ends on "Killed".** Every one so far has, which reads like a crash and
+was only this process declining to exit while a framework thread was still up. It says `done` and
+exits, so the last line of a transcript is the answer rather than an alarm.

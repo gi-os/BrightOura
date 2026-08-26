@@ -151,6 +151,11 @@ public final class Confirm {
         worker.start();
         // Dispatches the callback that carries the Bluetooth service. Returns when the worker quits.
         Looper.loop();
+        // Every transcript so far has ended on the word "Killed", which reads like a crash and is
+        // just this process refusing to exit while a framework thread is still up. Said plainly and
+        // then ended, so the last line of a transcript is the answer rather than an alarm.
+        System.out.println("done");
+        System.exit(0);
     }
 
     /**
@@ -227,6 +232,17 @@ public final class Confirm {
 
         BluetoothDevice device = adapter.getRemoteDevice(mac);
         System.out.println("device " + mac + " state " + name(device.getBondState()));
+
+        // **Listen for why, not just what.**
+        //
+        // `RESULT refused after confirming` was the honest answer to the wrong question: the
+        // confirmation went through and the bond then collapsed, and *why* it collapsed is carried
+        // on the bond-state broadcast as `EXTRA_REASON` — a number this helper had never asked for.
+        // The reasons point in completely different directions: the ring rejecting the key, the
+        // stack timing out, the ring going out of range, or the stack refusing because too many
+        // attempts have failed lately. Only the last of those has a remedy, and only this tells
+        // them apart.
+        watchBondState(context, mac);
 
         if (device.getBondState() == BluetoothDevice.BOND_BONDED) {
             System.out.println("RESULT already bonded");
@@ -506,6 +522,80 @@ public final class Confirm {
      * shell, or whatever the framework put on an adapter that came from `getSystemService`.
      */
     private static String attributedTo = "unknown";
+
+    /**
+     * Print every bond-state change for this device, with the reason in words.
+     *
+     * Registered rather than polled because the *reason* only exists on the broadcast — the bond
+     * state read back afterwards is a bare NONE, which is what made "refused after confirming" the
+     * end of the story rather than the beginning of one.
+     */
+    private static void watchBondState(Context context, final String mac) {
+        try {
+            android.content.BroadcastReceiver receiver = new android.content.BroadcastReceiver() {
+                @Override
+                public void onReceive(Context ignored, android.content.Intent intent) {
+                    BluetoothDevice which =
+                            intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE);
+                    if (which == null || !mac.equalsIgnoreCase(which.getAddress())) return;
+                    int state = intent.getIntExtra(BluetoothDevice.EXTRA_BOND_STATE, -1);
+                    int reason = intent.getIntExtra(REASON_EXTRA, -1);
+                    System.out.println("bond → " + name(state)
+                            + (reason >= 0 ? "  because: " + why(reason) : ""));
+                    if (reason == REASON_REPEATED_ATTEMPTS) {
+                        // The one with a fix, and it is not another attempt.
+                        System.out.println("the stack is refusing because too many pairings have "
+                                + "failed recently. Switch Bluetooth off and on — that clears the "
+                                + "count — and leave it a minute before trying again.");
+                    }
+                }
+            };
+            context.registerReceiver(
+                    receiver,
+                    new android.content.IntentFilter(BluetoothDevice.ACTION_BOND_STATE_CHANGED));
+        } catch (Throwable t) {
+            System.out.println("could not watch bond state: " + t.getClass().getSimpleName());
+        }
+    }
+
+    /** `BluetoothDevice.EXTRA_REASON`, which is hidden as a constant and plain as a string. */
+    private static final String REASON_EXTRA = "android.bluetooth.device.extra.REASON";
+
+    /** `BluetoothDevice.UNBOND_REASON_REPEATED_ATTEMPTS`. */
+    private static final int REASON_REPEATED_ATTEMPTS = 7;
+
+    /**
+     * An unbond reason in words.
+     *
+     * These are the difference between "the ring said no" and "the phone stopped asking", and the
+     * numbers are meaningless to everybody including me.
+     */
+    private static String why(int reason) {
+        switch (reason) {
+            case 0:
+                return "success";
+            case 1:
+                return "authentication failed — the keys did not match";
+            case 2:
+                return "the ring rejected it";
+            case 3:
+                return "cancelled on this side";
+            case 4:
+                return "the ring went away (out of range, asleep, or busy with another phone)";
+            case 5:
+                return "a discovery was running";
+            case 6:
+                return "authentication timed out";
+            case REASON_REPEATED_ATTEMPTS:
+                return "too many failed attempts recently — the stack is refusing for now";
+            case 8:
+                return "the ring cancelled it";
+            case 9:
+                return "the bond was removed";
+            default:
+                return "reason " + reason;
+        }
+    }
 
     /** Whether a system service of that name is registered at all. */
     private static String hasService(String name) {
