@@ -1,34 +1,32 @@
-## BrightOura v0.25 — a third route to the Bluetooth adapter, and a diagnosis when there is none
+## BrightOura v0.26 — the process had nothing pointing at the Bluetooth binder
 
-```
-FAILED no bluetooth adapter in this process
-```
-
-Both of the obvious routes returned **null** — not an exception, null, which is the least helpful
-thing a framework can say. The cause is structural: since Android 13 the Bluetooth stack lives in its
-own mainline module, and the wrapper that answers `getSystemService(BLUETOOTH_SERVICE)` is registered
-during *application* initialisation. `app_process` running a plain main class is not an application,
-so that registration may never have happened at all.
-
-**The third route is the one `BluetoothManager` uses on the inside:**
-`BluetoothAdapter.createAdapter(AttributionSource)` — straight to the `bluetooth_manager` binder with
-none of the module plumbing above it. Hidden, so reflected; the attribution source is built for this
-process's real uid and for `com.android.shell`, which is the package whose privileges the far side
-checks anyway.
-
-**And every step now says whether it worked**, because "no adapter" does not distinguish three quite
-different failures:
+Three routes to the adapter, all returning **null without throwing**, on a phone where the
+`bluetooth_manager` binder was present and `BluetoothManager` itself constructed fine. That
+combination is the whole diagnosis:
 
 ```
 bluetooth_manager binder: present
 manager: ok
 manager.getAdapter(): null
 getDefaultAdapter(): null
-createAdapter(): ok
-adapter state 12 enabled=true setting bluetooth_on=1
-createBond true
+createAdapter(): null
 ```
 
-If the binder itself comes back `missing`, no route can work and the answer is not another route —
-it is that this process cannot reach Bluetooth at all, and the helper has to be launched some other
-way. That is worth knowing in one line rather than three evenings.
+Since Android 13 the Bluetooth stack is a mainline module, and `BluetoothAdapter.createAdapter()`
+does not look the binder up itself — it asks `BluetoothFrameworkInitializer.getBluetoothServiceManager()`
+for it. **That object is installed by `ActivityThread` while an application starts.** The helper runs
+under `app_process` as a plain main class, which is not an application, so the setter is never
+called, the manager is null, and every route politely reports nothing. The binder was reachable the
+entire time; there was simply nothing pointing at it.
+
+So the helper now installs it, exactly as application startup would: construct the service manager,
+hand it to the initializer, then try the three routes again. Being installed twice counts as success
+— the framework throws `IllegalStateException` for a second call, which means somebody else got there
+first, which is the state we wanted anyway.
+
+Both plausible package names are tried, the constructor is taken as declared because it is not public
+API, and every step says what happened — including "no BluetoothServiceManager class on this build",
+which would mean this route is closed and the next one is the raw `IBluetooth` binder.
+
+Also printed now: whether a `bluetooth` service is registered alongside `bluetooth_manager`, because
+that is the binder the fallback would use.

@@ -230,6 +230,9 @@ public final class Confirm {
      */
     private static BluetoothAdapter adapter(Context context) {
         System.out.println("bluetooth_manager binder: " + hasService("bluetooth_manager"));
+        System.out.println("bluetooth binder: " + hasService("bluetooth"));
+        // Must come first: without it the three routes below all return null, politely.
+        installServiceManager();
 
         BluetoothManager manager = null;
         try {
@@ -269,6 +272,80 @@ public final class Confirm {
                     + ": " + t.getMessage());
         }
         return null;
+    }
+
+    /**
+     * Wire this process up to the Bluetooth mainline module, which nobody has done for it.
+     *
+     * ### Why all three routes returned null
+     *
+     * They returned null *without throwing*, on a phone with the `bluetooth_manager` binder present
+     * and a `BluetoothManager` that constructed fine. That combination is the tell. Since Android 13
+     * the Bluetooth stack is a mainline module, and `BluetoothAdapter.createAdapter()` does not look
+     * the binder up itself — it asks
+     * {@code BluetoothFrameworkInitializer.getBluetoothServiceManager()} for it. That object is
+     * installed by {@code ActivityThread} while an **application** starts.
+     *
+     * `app_process` running a plain main class is not an application, so the setter is never called,
+     * the manager is null, and every route politely reports nothing. The binder was reachable the
+     * whole time; there was simply nothing pointing at it.
+     *
+     * So this constructs the service manager and installs it, exactly as application startup would.
+     * Both plausible package names are tried, the constructor is taken as declared because it is not
+     * public API, and being installed twice is a success rather than a failure — the framework
+     * throws {@link IllegalStateException} for the second call, which means somebody got there
+     * first, which is the state we wanted.
+     */
+    private static void installServiceManager() {
+        Class<?> initializer = null;
+        for (String name : new String[] {
+                "android.bluetooth.BluetoothFrameworkInitializer",
+        }) {
+            try {
+                initializer = Class.forName(name);
+            } catch (Throwable ignored) {
+                // Tried the next one.
+            }
+        }
+        if (initializer == null) {
+            System.out.println("no BluetoothFrameworkInitializer on this build");
+            return;
+        }
+        Class<?> managerClass = null;
+        for (String name : new String[] {
+                "android.os.BluetoothServiceManager",
+                "android.bluetooth.BluetoothServiceManager",
+        }) {
+            try {
+                managerClass = Class.forName(name);
+                break;
+            } catch (Throwable ignored) {
+                // Tried the next one.
+            }
+        }
+        if (managerClass == null) {
+            System.out.println("no BluetoothServiceManager class on this build");
+            return;
+        }
+        try {
+            java.lang.reflect.Constructor<?> ctor = managerClass.getDeclaredConstructor();
+            ctor.setAccessible(true);
+            Object manager = ctor.newInstance();
+            java.lang.reflect.Method setter =
+                    initializer.getMethod("setBluetoothServiceManager", managerClass);
+            setter.setAccessible(true);
+            setter.invoke(null, manager);
+            System.out.println("service manager installed");
+        } catch (Throwable t) {
+            Throwable cause = t.getCause() == null ? t : t.getCause();
+            if (cause instanceof IllegalStateException) {
+                // Already installed — which is the outcome this was for.
+                System.out.println("service manager was already installed");
+            } else {
+                System.out.println("could not install the service manager: "
+                        + cause.getClass().getSimpleName() + ": " + cause.getMessage());
+            }
+        }
     }
 
     /** Whether a system service of that name is registered at all. */
