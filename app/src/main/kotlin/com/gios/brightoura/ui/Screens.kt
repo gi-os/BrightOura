@@ -371,6 +371,14 @@ fun SetupScreen(vm: RingViewModel, onDone: () -> Unit) {
             Rule()
             SectionLabel("WHEN IT WILL NOT PAIR")
             MenuRow(
+                label = "Repair the Settings app",
+                detail = "TRY",
+                sub = "It crashes on the pairing screen, and that screen is where the request " +
+                    "lives. Clearing that app's own stored state is reversible and touches none " +
+                    "of your actual settings — those live elsewhere. Runs through BrightControl.",
+                onClick = { vm.repairSettings() },
+            )
+            MenuRow(
                 label = "Copy the shell commands",
                 detail = "COPY",
                 sub = "No adb command can pair a device — the platform does not expose one. These " +

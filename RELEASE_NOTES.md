@@ -1,3 +1,28 @@
+## BrightOura v0.15 — the Settings app is now a suspect, not a bystander
+
+**It crashes on the pairing screen, and that screen is where the request lives.** The pairing
+notification is posted by Settings' own Bluetooth service and its dialog is a Settings activity — so
+an app that dies on the way there does not merely fail to *draw* the request: there may be no request
+posted at all. That is a different problem from the one this app has been working around, and it
+would explain every attempt so far.
+
+**So: Repair the Settings app.** `pm clear com.android.settings` resets that app's own stored state,
+its caches and preferences, and nothing else — the phone's actual settings live in the settings
+provider and survive it untouched. A system app that crashes on one screen and works everywhere else
+is very often a corrupt preference, and this is the cheapest way to rule that in or out. It runs
+through BrightControl, which already holds an adb shell, and the row says plainly what it does
+because "clear the Settings app" sounds far worse than it is.
+
+**And the listener now traces every Bluetooth notification, not just the pairing one.** The open
+question has changed: not "can this be pressed" but "does the request exist at all". If Settings
+crashes before posting it, there is nothing to press and nothing to draw — and from outside, that
+looks identical to a notification that arrives and is ignored. One traced line each settles it.
+
+**A PIN variant can now be answered.** `setPin` is public API where `setPairingConfirmation` is not,
+so a request that asks for a code rather than a yes can be answered without any privilege. This ring
+asks for consent, so it will not come up — but four lines is a cheap insurance against another
+firmware asking differently.
+
 ## BrightOura v0.14 — press the button nobody can see
 
 **"Couldn't pair — incorrect PIN or passkey" is progress, and it is also the system lying to you.**

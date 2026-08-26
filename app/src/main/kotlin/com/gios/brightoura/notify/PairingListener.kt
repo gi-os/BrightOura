@@ -46,6 +46,13 @@ class PairingListener : NotificationListenerService() {
         val body = posted.notification ?: return
         val title = text(body, Notification.EXTRA_TITLE)
         val message = text(body, Notification.EXTRA_TEXT)
+
+        // **Every Bluetooth notification is traced, not only the pairing one.** The open question
+        // is no longer "can this be pressed" but "does the request exist at all" — if the app that
+        // posts it crashes on the way there is nothing to press and nothing to draw, and from
+        // outside those two failures look identical. One line each settles it.
+        Trace.add("notification from ${posted.packageName}: $title | $message")
+
         if (!looksLikePairing(title, message)) return
 
         Trace.add("pairing notification from ${posted.packageName}: $title")

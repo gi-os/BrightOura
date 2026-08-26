@@ -337,6 +337,45 @@ class RingViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
+     * Hand BrightControl the one repair worth trying on a Settings app that crashes.
+     *
+     * `pm clear com.android.settings` resets that app's own stored state — its caches and its
+     * preferences — and nothing else. The phone's actual settings live in the settings provider and
+     * survive it untouched. A system app that crashes on one screen and works everywhere else is
+     * very often a corrupt preference, and this is the cheapest way to rule that in or out.
+     *
+     * Said plainly on screen before it runs, because "clear the Settings app" sounds far more
+     * destructive than it is — and a command somebody does not understand is one they should not
+     * approve.
+     */
+    fun repairSettings() {
+        val app = getApplication<Application>()
+        val commands = arrayListOf(
+            "pm clear com.android.settings",
+            "pm enable com.android.settings",
+        )
+        val intent = android.content.Intent("com.gios.lightcontrol.action.RUN_GRANTS")
+            .putExtra("com.gios.lightcontrol.extra.PACKAGE", "com.android.settings")
+            .putStringArrayListExtra("com.gios.lightcontrol.extra.COMMANDS", commands)
+            .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+        val handed = runCatching { app.startActivity(intent); true }.getOrDefault(false)
+        if (handed) {
+            say("BrightControl has it. Approve there, then pair from the Bluetooth screen.")
+            return
+        }
+        runCatching {
+            app.getSystemService(android.content.ClipboardManager::class.java)
+                ?.setPrimaryClip(
+                    android.content.ClipData.newPlainText(
+                        "repair",
+                        commands.joinToString("\n") { "adb shell $it" },
+                    ),
+                )
+        }
+        say("On the clipboard. Run it from BrightControl's ADB screen.")
+    }
+
+    /**
      * The shell commands worth running when the phone itself is the problem.
      *
      * There is **no supported adb command that pairs a device** — the platform exposes enabling,

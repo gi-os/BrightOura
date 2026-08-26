@@ -78,6 +78,20 @@ object Pairing {
                     onProgress("Accepted it for you")
                     return
                 }
+                // A PIN variant can be answered with no privilege at all — `setPin` is public API
+                // where `setPairingConfirmation` is not. This ring asks for consent rather than a
+                // PIN so it will not come up, and it costs four lines to be ready if another
+                // firmware or generation ever asks differently.
+                if (variant == VARIANT_PIN || variant == VARIANT_PIN_16) {
+                    val pinned = COMMON_PINS.any { pin ->
+                        runCatching { device.setPin(pin.toByteArray()) }.getOrDefault(false)
+                    }
+                    Trace.add(if (pinned) "answered with a common PIN" else "no PIN was accepted")
+                    if (pinned) {
+                        onProgress("Answered the PIN request")
+                        return
+                    }
+                }
                 // Could not answer it. Everything left is an attempt to put *something* on screen
                 // that can, in falling order of likelihood on this phone.
                 if (show(context, device, variant, onProgress)) return
@@ -272,6 +286,12 @@ object Pairing {
 
     /** `BluetoothDevice.TRANSPORT_LE`. Public as a constant; only the overload taking it is not. */
     private const val TRANSPORT_LE = 2
+
+    private const val VARIANT_PIN = 0
+    private const val VARIANT_PIN_16 = 6
+
+    /** What a device with no keypad is usually willing to accept. */
+    private val COMMON_PINS = listOf("0000", "1234", "000000")
 
     private const val SETTINGS = "com.android.settings"
     private const val LIGHTOS = "com.lightos"
