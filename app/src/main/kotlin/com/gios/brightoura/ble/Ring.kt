@@ -691,7 +691,12 @@ class Ring private constructor(
             // Watch for the request while this bond is in flight. On this phone the system's own
             // notification is never rendered — see [Pairing] — so something has to either answer it
             // or put it on screen, and both of those live there.
-            val watcher = Pairing.watch(context, onProgress)
+            // Set when the platform asks for consent, which is the tell that this bond was not
+            // credited to this app. See the retry below.
+            val sawConsent = AtomicBoolean(false)
+            val watcher = Pairing.watch(context, onProgress) { variant ->
+                if (variant == VARIANT_CONSENT) sawConsent.set(true)
+            }
             // **The bond has to start from here, and from nothing else.**
             //
             // Two different problems, one cure. A previous half-bond poisons every attempt after
@@ -738,7 +743,40 @@ class Ring private constructor(
                 onProgress(
                     "Pairing… most rings pair with no prompt at all, so this may just finish",
                 )
-                val bonded = withTimeoutOrNull(BOND_MS) { done.receive() } ?: false
+                var bonded = withTimeoutOrNull(BOND_MS) { done.receive() } ?: false
+
+                // **One retry, and only for the failure a retry actually fixes.**
+                //
+                // A consent request means the platform did not credit this app with starting the
+                // bond, because something else got there first. Two things do that: the system,
+                // when an association carries a device profile, and *the ring itself*, which can
+                // ask for security the moment a link is up. Neither goes through `createBond`, so
+                // no caller is recorded, so the dialog is raised over a phone that cannot draw it.
+                //
+                // By the time that is known, the fix is cheap: the bond that beat us has failed and
+                // torn itself down, nothing else is in flight, and the companion association is
+                // still minutes from expiring. Asking again from here is the first `createBond` of
+                // the next attempt, which is the whole point. Once, though — a loop here is a phone
+                // that pairs forever and says nothing.
+                if (!bonded && sawConsent.get()) {
+                    Trace.add("consent dialog was raised — retrying as the first caller")
+                    onProgress("That pairing was not credited to this app — asking again, properly")
+                    runCatching { forgetBond(device) }
+                    var cleared = 0L
+                    while (device.bondState != BluetoothDevice.BOND_NONE && cleared < CLEAR_MS) {
+                        kotlinx.coroutines.delay(200)
+                        cleared += 200
+                    }
+                    // The teardown announces itself, and the channel is CONFLATED — so the
+                    // BOND_NONE from *clearing* the failed bond is sitting in it, and the retry's
+                    // wait would receive that stale `false` the instant it started and call the
+                    // attempt failed before the ring had been asked anything. Drop what the
+                    // teardown left; anything after this point is an answer to the new request.
+                    while (done.tryReceive().isSuccess) Unit
+                    val again = runCatching { device.createBond() }.getOrDefault(false)
+                    Trace.add("retry createBond started=$again (state ${device.bondState})")
+                    if (again) bonded = withTimeoutOrNull(BOND_MS) { done.receive() } ?: false
+                }
                 if (!bonded) onProgress("Pairing did not finish in a minute")
                 bonded
             } finally {
@@ -816,6 +854,9 @@ class Ring private constructor(
 
         /** The ring's own MTU, from the captures. */
         private const val MTU = 203
+
+        /** `BluetoothDevice.PAIRING_VARIANT_CONSENT` — the variant this phone cannot draw. */
+        private const val VARIANT_CONSENT = 3
 
         /**
          * How long to wait for a bond to actually read as gone before asking for a new one.

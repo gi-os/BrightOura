@@ -53,7 +53,16 @@ object Pairing {
      * somebody started somewhere else entirely.
      */
     @SuppressLint("MissingPermission")
-    fun watch(context: Context, onProgress: (String) -> Unit): AutoCloseable {
+    fun watch(
+        context: Context,
+        onProgress: (String) -> Unit,
+        /**
+         * Told the variant of every request seen. [Ring.bond] uses it to find out whether the
+         * platform fell back to its consent dialog, which is the one failure worth retrying
+         * differently rather than reporting.
+         */
+        onVariant: (Int) -> Unit = {},
+    ): AutoCloseable {
         val receiver = object : BroadcastReceiver() {
             override fun onReceive(c: Context?, intent: Intent?) {
                 if (intent?.action != BluetoothDevice.ACTION_PAIRING_REQUEST) return
@@ -61,6 +70,7 @@ object Pairing {
                 intent.getParcelableExtra<BluetoothDevice>(BluetoothDevice.EXTRA_DEVICE)
                 val variant = intent.getIntExtra(BluetoothDevice.EXTRA_PAIRING_VARIANT, -1)
                 Trace.add("pairing request, variant $variant (${variantName(variant)})")
+                onVariant(variant)
                 onProgress("The phone is asking to pair — ${variantName(variant)}")
                 // A consent request arriving at all is a diagnosis, not just a prompt. The platform
                 // skips this variant when the bond was started by an app holding a fresh companion
