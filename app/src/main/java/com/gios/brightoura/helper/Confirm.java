@@ -181,7 +181,7 @@ public final class Confirm {
         //
         // The state is printed instead, next to a reading nobody can get wrong: the global setting,
         // which says what the *phone* thinks and is readable by anyone.
-        System.out.println("attributed to " + attribution(adapter));
+        System.out.println("attributed to " + attributedTo);
         System.out.println("adapter state " + adapter.getState()
                 + " enabled=" + adapter.isEnabled()
                 + " setting bluetooth_on=" + globalInt(context, "bluetooth_on"));
@@ -343,7 +343,11 @@ public final class Confirm {
                     "createAdapter", android.content.AttributionSource.class);
             BluetoothAdapter built = (BluetoothAdapter) create.invoke(null, source);
             System.out.println("createAdapter(shell): " + (built == null ? "null" : "ok"));
-            if (built != null) return built;
+            if (built != null) {
+                attributedTo = "com.android.shell (uid " + android.os.Process.myUid()
+                        + ") via createAdapter";
+                return built;
+            }
         } catch (Throwable t) {
             System.out.println("createAdapter threw " + t.getClass().getSimpleName()
                     + ": " + t.getMessage());
@@ -361,7 +365,11 @@ public final class Confirm {
             System.out.println("manager.getAdapter(): " + (fromManager == null ? "null" : "ok"));
             // Kept as a fallback, and it is a real one — an adapter that cannot bond can still
             // read state, and reading state is how the next failure gets diagnosed.
-            if (fromManager != null) return fromManager;
+            if (fromManager != null) {
+                attributedTo = "whatever getSystemService carried, probably \"android\" — which is "
+                        + "the mismatch that makes createBond return false";
+                return fromManager;
+            }
         }
 
         BluetoothAdapter fromStatic = null;
@@ -371,6 +379,7 @@ public final class Confirm {
             System.out.println("getDefaultAdapter threw " + t.getClass().getSimpleName());
         }
         System.out.println("getDefaultAdapter(): " + (fromStatic == null ? "null" : "ok"));
+        if (fromStatic != null) attributedTo = "the default adapter's own attribution";
         return fromStatic;
     }
 
@@ -449,26 +458,17 @@ public final class Confirm {
     }
 
     /**
-     * Which package this adapter's calls are attributed to, if it can be asked.
+     * Which package this adapter's calls will be attributed to, recorded when it is built.
      *
      * The crux of light-reports#121: `createBond` returns false when the attributed package does not
-     * belong to the calling uid, silently, with every other reading healthy. Printing it turns the
-     * next such failure into one line instead of an evening.
+     * belong to the calling uid — silently, with every other reading healthy. So it is worth a line.
+     *
+     * Written down as the adapter is created rather than read back off it: the field that holds it,
+     * `mAttributionSource`, is a blocked private API from API 35, and lint is right to refuse it.
+     * There is nothing to discover anyway — the attribution is either the one built here for the
+     * shell, or whatever the framework put on an adapter that came from `getSystemService`.
      */
-    private static String attribution(BluetoothAdapter adapter) {
-        try {
-            java.lang.reflect.Field field =
-                    BluetoothAdapter.class.getDeclaredField("mAttributionSource");
-            field.setAccessible(true);
-            Object source = field.get(adapter);
-            if (source == null) return "nothing";
-            java.lang.reflect.Method name = source.getClass().getMethod("getPackageName");
-            java.lang.reflect.Method uid = source.getClass().getMethod("getUid");
-            return name.invoke(source) + " (uid " + uid.invoke(source) + ")";
-        } catch (Throwable t) {
-            return "unreadable (" + t.getClass().getSimpleName() + ")";
-        }
-    }
+    private static String attributedTo = "unknown";
 
     /** Whether a system service of that name is registered at all. */
     private static String hasService(String name) {
