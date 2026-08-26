@@ -72,12 +72,31 @@ object Companions {
         val builder = AssociationRequest.Builder()
             .addDeviceFilter(filter)
             .setSingleDevice(false)
-        // The watch profile is what makes the system pair the device for us. It is only available
-        // from Android 12, and asking for it on an older build throws rather than degrading.
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            runCatching { builder.setDeviceProfile(AssociationRequest.DEVICE_PROFILE_WATCH) }
-                .onFailure { Trace.add("watch profile refused: ${it.javaClass.simpleName}") }
-        }
+        // **No device profile, deliberately.**
+        //
+        // Up to v0.16 this asked for DEVICE_PROFILE_WATCH, on the reasoning that the watch profile
+        // makes the *system* pair the device for us — which sounded like exactly what a phone with
+        // a broken pairing dialog needs. It is the opposite. The platform decides whether to skip
+        // its consent dialog by looking up who called `createBond`:
+        //
+        // ```java
+        // boolean createBond(device, transport, ..., callingPackage) {
+        //     if (deviceProp != null && deviceProp.getBondState() != BOND_NONE) {
+        //         return deviceProp.getBondState() == BOND_BONDING;   // early return
+        //     }                                                      // caller never recorded
+        //     mBondAttemptCallerInfo.put(device.getAddress(), new CallerInfo(callingPackage, user));
+        // }
+        // ```
+        //
+        // Whoever bonds **first** owns that slot, and `canBondWithoutDialog` reads only that slot.
+        // With the watch profile the association itself starts the bond, from the system — so our
+        // own `createBond`, arriving milliseconds later, hit the early return and changed nothing.
+        // The recorded caller was a package holding no association, the check failed, and the
+        // consent dialog was raised over a phone that cannot draw one. Right address, inside the
+        // window, wrong caller.
+        //
+        // A plain association bonds nothing. It records the approval and gets out of the way, which
+        // leaves the first `createBond` to us.
         onProgress("Asking the phone to find the ring")
         Trace.add("companion association requested")
         runCatching {

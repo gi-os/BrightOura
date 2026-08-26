@@ -1,39 +1,40 @@
-## BrightOura v0.16 — pairing goes through the association, and lands on the same address
+## BrightOura v0.17 — the pairing has to be started by us, not for us
 
-**The ring could not be paired on this phone, and the reason was never the ring.** The crash log
-finally says it outright: the bond starts, the stack asks Settings to draw the consent dialog, and
-Settings dies building it — `NullPointerException` in `DialogFragment.prepareDialog`, because
-LightOS's pairing fragment returns a **null dialog** for pairing variant 3. Nothing is on screen to
-accept, the bond times out, the ring goes back to unpaired. Every device that needs a consent
-dialog hits this, which is also why an iPad would not pair.
+**v0.16 got the address right and still met the dialog.** The association named
+`4B:C8:F0:B4:09:9B`, approved at 23:23:13; the bond ran on the same address at 23:23:13.642, half a
+second later; and the phone still logged `canBondWithoutDialog=false` and raised the consent dialog
+that takes Settings down with it. Right address, well inside the ten minutes, and it made no
+difference.
 
-**Android has a way around its own dialog, and it is stricter than "associate the device".** The
-framework's rule, verbatim:
+**Because there is a third condition, and it is about who asked.** The platform decides by looking
+up the caller recorded against the address:
 
 ```java
-canPairWithoutPrompt(pkg, mac, user) {
-    association = getFirstAssociationByAddress(user, pkg, mac);   // this exact address
-    return now - association.getTimeApprovedMs() < 10 * 60 * 1000; // approved under 10 min ago
+boolean createBond(device, transport, ..., callingPackage) {
+    if (deviceProp != null && deviceProp.getBondState() != BOND_NONE) {
+        return deviceProp.getBondState() == BOND_BONDING;   // early return
+    }                                                       // caller never recorded
+    mBondAttemptCallerInfo.put(device.getAddress(), new CallerInfo(callingPackage, user));
 }
 ```
 
-Both halves had been failing. This app already ran the system picker, but then went back to the
-scan list to bond — and an Oura ring advertises with a **rotating private address**, so the address
-it bonded was not the address that was associated. The phone was holding two associations from
-hours earlier, for two addresses the ring had already moved on from, while every bond attempt used
-a third.
+Whoever bonds **first** owns that record. Everyone after gets the early return and changes nothing.
 
-**So the picker's answer is now the thing that gets paired.** The address comes off the picker's own
-result — `EXTRA_ASSOCIATION` where the platform provides it, the returned scan result otherwise —
-and pairing starts on that address immediately, in the same breath, with no second scan in between.
-No prompt is drawn, because the platform has no reason to draw one. Settings is never started, so
-Settings never crashes.
+**The watch profile was starting the bond.** Asking for `DEVICE_PROFILE_WATCH` was meant to hand the
+pairing to the platform, which sounded like the right move on a phone whose pairing dialog is
+broken. It was the thing breaking it: associating with that profile bonds the device from the
+system, our `createBond` arrived milliseconds later into a state that was no longer BOND_NONE, and
+the caller on file was a package with no association. The check failed for the one reason nobody
+was looking at.
 
-**Stale associations are dropped as they are replaced.** One ring should not accumulate an
-association per address it has ever advertised, and a list full of dead addresses is worse than an
-empty one: it makes the setup look done while the only check that matters keeps failing. Each
-successful pick keeps its own association and clears the rest.
+So the association is plain now. It records the approval and bonds nothing, which leaves the first
+`createBond` to this app — the app that holds the association, on the address the picker just
+returned. The consent dialog has no reason to be raised, so it is not, so Settings never runs.
 
-**And the diagnosis says which addresses are associated,** not just whether any are. "Associated:
-true" was technically correct and completely useless on a phone holding two associations that could
-never match.
+**And a bond already in flight gets taken back rather than joined.** Anything other than BOND_NONE
+is cleared first, and the code now *waits for the state to actually read NONE* instead of guessing
+600 milliseconds at it. Losing that race used to cost the entire attempt, silently.
+
+**A consent request arriving is now reported as the diagnosis it is.** If that dialog is ever
+requested again, the screen says what it means — the pairing was not credited to this app — instead
+of a minute of "Pairing…" ending in a failure with no cause attached.

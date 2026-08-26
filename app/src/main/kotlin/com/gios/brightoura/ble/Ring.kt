@@ -692,14 +692,35 @@ class Ring private constructor(
             // notification is never rendered — see [Pairing] — so something has to either answer it
             // or put it on screen, and both of those live there.
             val watcher = Pairing.watch(context, onProgress)
-            // A previous half-bond poisons every attempt after it: the phone thinks it holds
-            // something the ring does not, and the next pairing fails as "incorrect PIN" forever.
+            // **The bond has to start from here, and from nothing else.**
+            //
+            // Two different problems, one cure. A previous half-bond poisons every attempt after
+            // it: the phone thinks it holds something the ring does not, and the next pairing fails
+            // as "incorrect PIN" forever. And a bond that is *already in flight* — started by the
+            // system, or by a GATT link asking for encryption — makes this call a no-op, because
+            // `AdapterService.createBond` returns early for any state that is not BOND_NONE and
+            // never records who asked. That record is the only thing standing between us and the
+            // consent dialog this phone crashes on, so a bond we did not start is worth less than
+            // no bond at all.
+            //
+            // So: anything other than BOND_NONE gets cleared, and then this **waits for the state
+            // to actually be NONE**. The old fixed 600ms was a guess, and losing that race costs
+            // the whole attempt.
             if (device.bondState != BluetoothDevice.BOND_BONDED) {
+                if (device.bondState != BluetoothDevice.BOND_NONE) {
+                    Trace.add("bond already in flight (state ${device.bondState}) — taking it back")
+                    onProgress("Something else started pairing — taking it back")
+                }
                 if (forgetBond(device)) {
                     Trace.add("cleared a half-made bond first")
                     onProgress("Clearing what was left of the last attempt")
-                    kotlinx.coroutines.delay(600)
                 }
+                var waited = 0L
+                while (device.bondState != BluetoothDevice.BOND_NONE && waited < CLEAR_MS) {
+                    kotlinx.coroutines.delay(200)
+                    waited += 200
+                }
+                Trace.add("bond state before asking: ${device.bondState} (waited ${waited}ms)")
             }
             return try {
                 // LE first. The plain call may try classic pairing against a device that only
@@ -795,6 +816,16 @@ class Ring private constructor(
 
         /** The ring's own MTU, from the captures. */
         private const val MTU = 203
+
+        /**
+         * How long to wait for a bond to actually read as gone before asking for a new one.
+         *
+         * `removeBond` is a request, not a state change: the state machine tears the bond down and
+         * announces it, and asking for a new bond in between is asking for the no-op described in
+         * [bond]. Four seconds is far more than the teardown takes and far less than the minute a
+         * failed pairing costs.
+         */
+        private const val CLEAR_MS = 4_000L
 
         /**
          * Why a bond ended, in words.

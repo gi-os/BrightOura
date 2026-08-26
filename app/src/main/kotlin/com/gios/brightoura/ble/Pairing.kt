@@ -62,6 +62,20 @@ object Pairing {
                 val variant = intent.getIntExtra(BluetoothDevice.EXTRA_PAIRING_VARIANT, -1)
                 Trace.add("pairing request, variant $variant (${variantName(variant)})")
                 onProgress("The phone is asking to pair — ${variantName(variant)}")
+                // A consent request arriving at all is a diagnosis, not just a prompt. The platform
+                // skips this variant when the bond was started by an app holding a fresh companion
+                // association for the same address — so seeing it means our `createBond` was not
+                // the one that counted, and on this phone the dialog behind it will take Settings
+                // down rather than appear. Worth saying plainly, because the alternative is a
+                // minute of "Pairing…" ending in a failure with no cause attached.
+                if (variant == VARIANT_CONSENT) {
+                    Trace.add("consent variant: the bond was not credited to this app")
+                    onProgress(
+                        "The phone wants its own consent dialog, which means this pairing was " +
+                            "not credited to this app. Run the picker again and let pairing " +
+                            "follow it immediately.",
+                    )
+                }
                 if (device == null) return
                 // Just Works and consent-style variants are the ones a listener can answer.
                 val answered = runCatching { device.setPairingConfirmation(true) }
@@ -286,6 +300,9 @@ object Pairing {
 
     /** `BluetoothDevice.TRANSPORT_LE`. Public as a constant; only the overload taking it is not. */
     private const val TRANSPORT_LE = 2
+
+    /** `BluetoothDevice.PAIRING_VARIANT_CONSENT`. The one this phone cannot draw. */
+    private const val VARIANT_CONSENT = 3
 
     private const val VARIANT_PIN = 0
     private const val VARIANT_PIN_16 = 6
