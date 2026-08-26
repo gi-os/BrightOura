@@ -57,6 +57,9 @@ public final class Confirm {
     /** Between attempts. The request can arrive several seconds after the bond is asked for. */
     private static final long POLL_MS = 500L;
 
+    /** How often to say something when nothing has changed, so a live transcript keeps moving. */
+    private static final long HEARTBEAT_MS = 3_000L;
+
     public static void main(String[] args) {
         if (args.length < 1) {
             System.out.println("usage: Confirm <MAC> [budgetMs]");
@@ -137,11 +140,26 @@ public final class Confirm {
         long deadline = System.currentTimeMillis() + budget;
         boolean confirmed = false;
         int last = -1;
+        long spoke = System.currentTimeMillis();
         while (System.currentTimeMillis() < deadline) {
             int state = device.getBondState();
             if (state != last) {
                 System.out.println("state " + name(state));
                 last = state;
+                spoke = System.currentTimeMillis();
+            }
+            // **Say something every few seconds even when nothing has happened.**
+            //
+            // The wait here is the point: the platform raises its pairing request several seconds
+            // after the bond starts, and this has to be sitting here when it does. But the output
+            // is read live by whoever ran it, and twenty seconds of silence in a transcript reads
+            // as a hung command — which is what the last one was reported as. A countdown says the
+            // difference between waiting and stuck.
+            long now = System.currentTimeMillis();
+            if (now - spoke >= HEARTBEAT_MS) {
+                System.out.println("waiting… " + ((deadline - now) / 1000) + "s left, state "
+                        + name(state));
+                spoke = now;
             }
             if (state == BluetoothDevice.BOND_BONDED) {
                 System.out.println("RESULT bonded");
