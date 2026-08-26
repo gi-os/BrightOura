@@ -261,8 +261,9 @@ fun SetupScreen(vm: RingViewModel, onDone: () -> Unit) {
                 MenuRow(
                     label = "Let the phone pair it",
                     detail = if (busy) "…" else "SYSTEM",
-                    sub = "Runs the phone's own device picker — an actual dialog, not a " +
-                        "notification, so it appears on this phone. The system does the pairing.",
+                    sub = "The one that works on this phone. Pick the ring in the system's own " +
+                        "picker and pairing runs straight after, with no prompt — the phone " +
+                        "skips its own pairing dialog for ten minutes after you pick.",
                     onClick = { vm.pairViaSystem() },
                 )
                 MenuRow(

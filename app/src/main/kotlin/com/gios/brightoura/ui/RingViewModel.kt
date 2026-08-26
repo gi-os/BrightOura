@@ -247,6 +247,55 @@ class RingViewModel(app: Application) : AndroidViewModel(app) {
     fun pickerShown() { _picker.value = null }
 
     /**
+     * The picker said yes. Bond that address, now, before the window shuts.
+     *
+     * ### The ten minutes
+     *
+     * This is the whole fix for a phone whose pairing dialog crashes. The platform skips the
+     * consent dialog when the bond is asked for by an app that holds a companion association **for
+     * that exact address**, approved **less than ten minutes ago** — see [Companions.addressFrom]
+     * for the rule as the framework writes it. Miss either half and the system starts
+     * `com.android.settings/.bluetooth.BluetoothPairingDialog`, which on LightOS builds a null
+     * dialog for the consent variant and takes Settings down with it. Nothing is on screen to
+     * accept, so the bond times out and the ring goes back to BOND_NONE.
+     *
+     * So this does not hand back to the user, and does not re-scan: the address the picker returned
+     * is the address the ring is using right now, and `createBond` on it goes straight through with
+     * no prompt at all.
+     */
+    fun associated(data: android.content.Intent?) {
+        val address = Companions.addressFrom(data)
+        if (address == null) {
+            Trace.add("association result carried no address")
+            say(
+                "The phone associated the ring but would not say which address. Try the picker " +
+                    "again — the address it hands back is the one we have to pair.",
+            )
+            return
+        }
+        Trace.add("associated $address")
+        // Old associations name addresses the ring has rotated away from, and they are what makes
+        // the association list look healthy while every bond falls back to the dialog.
+        Companions.prune(getApplication(), keep = address)
+        work("pair the Bluetooth link") {
+            step("Associated $address — pairing now, while the phone still allows it")
+            val ok = withContext(Dispatchers.IO) {
+                Ring.bondWith(getApplication(), address) { line -> Trace.add(line); step(line) }
+            }
+            say(
+                if (ok) {
+                    "Paired with $address. Probe it now."
+                } else {
+                    "The pairing did not finish. Run the picker again and let this run straight " +
+                        "after it — the phone only skips its own pairing dialog for ten minutes " +
+                        "after you pick the ring, and only for the address it picked."
+                },
+            )
+            if (!ok) fail("pair the Bluetooth link", "bond after association did not reach BONDED")
+        }
+    }
+
+    /**
      * Ask the system to pair the ring for us.
      *
      * The path that works on a phone which never draws the pairing notification: the companion
@@ -302,6 +351,13 @@ class RingViewModel(app: Application) : AndroidViewModel(app) {
             appendLine("bluetooth on: ${Ring.bluetoothOn(app)}")
             appendLine("permissions ok: ${bluetoothReady()}")
             appendLine("companion association: ${Companions.associated(app)}")
+        val associated = Companions.addresses(app)
+        appendLine(
+            if (associated.isEmpty()) "associated addresses: none"
+            // The addresses are the diagnosis. A list that does not contain the
+            // address being bonded is a bond that will meet the pairing dialog.
+            else "associated addresses: " + associated.joinToString()
+        )
             appendLine("ring stored: ${vault.name ?: "none"} ${vault.address ?: ""}")
             appendLine("key held: ${vault.key() != null}")
             appendLine("bonded devices:")

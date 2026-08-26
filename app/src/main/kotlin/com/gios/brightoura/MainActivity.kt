@@ -128,13 +128,14 @@ class MainActivity : ComponentActivity() {
         val launchPicker = rememberLauncherForActivityResult(
             ActivityResultContracts.StartIntentSenderForResult(),
         ) { result ->
-            vm.say(
-                if (result.resultCode == RESULT_OK) {
-                    "The phone associated the ring. Probe it now."
-                } else {
-                    "The picker was closed without choosing anything."
-                },
-            )
+            // The result carries the address the system associated, and that address is the only
+            // one the platform will let us bond without its own (broken) dialog — for ten minutes.
+            // So it goes straight to the view model rather than being reported as a step done.
+            if (result.resultCode == RESULT_OK) {
+                vm.associated(result.data)
+            } else {
+                vm.say("The picker was closed without choosing anything.")
+            }
         }
         LaunchedEffect(picker) {
             val sender = picker ?: return@LaunchedEffect

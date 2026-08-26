@@ -1,12 +1,17 @@
 package com.gios.brightoura.ble
 
 import android.annotation.SuppressLint
+import android.bluetooth.BluetoothDevice
 import android.bluetooth.le.ScanFilter
+import android.bluetooth.le.ScanResult
+import android.companion.AssociationInfo
 import android.companion.AssociationRequest
 import android.companion.BluetoothLeDeviceFilter
 import android.companion.CompanionDeviceManager
 import android.content.Context
+import android.content.Intent
 import android.content.IntentSender
+import android.os.Parcelable
 import android.os.Build
 import com.gios.brightoura.data.Trace
 import java.util.regex.Pattern
@@ -103,6 +108,96 @@ object Companions {
             onFailure(it.message ?: it.javaClass.simpleName)
         }
     }
+
+    /**
+     * The address the system just associated, read off the picker's own result.
+     *
+     * ### Why the address matters more than the association
+     *
+     * Associating is not what skips the pairing dialog. This is the rule, out of the platform:
+     *
+     * ```java
+     * // CompanionDeviceManagerService
+     * canPairWithoutPrompt(pkg, mac, user) {
+     *     association = getFirstAssociationByAddress(user, pkg, mac);   // exact address
+     *     return now - association.getTimeApprovedMs() < 10 * 60 * 1000;
+     * }
+     * ```
+     *
+     * and the Bluetooth stack asks it by the address `createBond` was called on. So an association
+     * only helps when **the bond lands on the same address, within ten minutes of approval**. An
+     * Oura ring advertises with a rotating private address, so an association made an hour ago
+     * names an address the ring has already stopped using: the check fails, the system falls back
+     * to the consent dialog, and on this phone that dialog is the one that crashes Settings.
+     *
+     * Hence: take the address the picker hands back, and bond that one, now. Not a fresh scan
+     * result, not the last one we saw.
+     */
+    fun addressFrom(data: Intent?): String? {
+        if (data == null) return null
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            runCatching {
+                data.getParcelableExtra(
+                    CompanionDeviceManager.EXTRA_ASSOCIATION,
+                    AssociationInfo::class.java,
+                )
+            }.getOrNull()?.deviceMacAddress?.toString()?.let { return it.uppercase() }
+        }
+        @Suppress("DEPRECATION")
+        val found = runCatching {
+            data.getParcelableExtra<Parcelable>(CompanionDeviceManager.EXTRA_DEVICE)
+        }.getOrNull()
+        val address = when (found) {
+            is BluetoothDevice -> found.address
+            is ScanResult -> found.device?.address
+            else -> null
+        }
+        return address?.uppercase()
+    }
+
+    /**
+     * Drop every association except the one just made.
+     *
+     * A rotating address means a new association every time this is run, and they pile up — two
+     * associations for one ring, both naming addresses it no longer answers to, was the state this
+     * phone was found in. They are not harmless: they make the association list say the ring is set
+     * up while the only check that matters keeps failing on the address.
+     */
+    @SuppressLint("MissingPermission")
+    fun prune(context: Context, keep: String?) {
+        val manager = context.getSystemService(CompanionDeviceManager::class.java) ?: return
+        runCatching {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                manager.myAssociations
+                    .filterNot { it.deviceMacAddress?.toString().equals(keep, ignoreCase = true) }
+                    .forEach { old ->
+                        Trace.add("dropping stale association ${old.deviceMacAddress}")
+                        runCatching { manager.disassociate(old.id) }
+                    }
+            } else {
+                @Suppress("DEPRECATION")
+                manager.associations
+                    .filterNot { it.equals(keep, ignoreCase = true) }
+                    .forEach { old ->
+                        Trace.add("dropping stale association $old")
+                        @Suppress("DEPRECATION")
+                        runCatching { manager.disassociate(old) }
+                    }
+            }
+        }
+    }
+
+    /** Every association this app holds, as addresses, for the diagnosis screen. */
+    fun addresses(context: Context): List<String> = runCatching {
+        val manager = context.getSystemService(CompanionDeviceManager::class.java)
+            ?: return emptyList()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            manager.myAssociations.mapNotNull { it.deviceMacAddress?.toString() }
+        } else {
+            @Suppress("DEPRECATION")
+            manager.associations.toList()
+        }
+    }.getOrDefault(emptyList())
 
     /** Whether the system already holds an association for us, so the step can be skipped. */
     fun associated(context: Context): Boolean = runCatching {
