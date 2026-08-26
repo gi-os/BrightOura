@@ -259,11 +259,18 @@ fun SetupScreen(vm: RingViewModel, onDone: () -> Unit) {
                     onClick = { vm.grantListener() },
                 )
                 MenuRow(
+                    label = "Pair through BrightControl",
+                    detail = if (busy) "…" else "SHELL",
+                    sub = "The one that works. BrightControl's adb shell is the only thing on " +
+                        "this phone allowed to accept a pairing request — every screen that " +
+                        "would ask you to accept one crashes. Approve the line it shows.",
+                    onClick = { vm.pairViaShell(ring.address) },
+                )
+                MenuRow(
                     label = "Let the phone pair it",
                     detail = if (busy) "…" else "SYSTEM",
-                    sub = "The one that works on this phone. Pick the ring in the system's own " +
-                        "picker and pairing runs straight after, with no prompt — the phone " +
-                        "skips its own pairing dialog for ten minutes after you pick.",
+                    sub = "The system's own picker, then pairing with the screen off. Worth a try " +
+                        "on a phone whose pairing dialog works; this one's does not.",
                     onClick = { vm.pairViaSystem() },
                 )
                 MenuRow(

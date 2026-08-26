@@ -1,32 +1,40 @@
-## BrightOura v0.20 — it waits for the screen to go off, instead of asking you to be quick
+## BrightOura v0.21 — pairing goes through the shell, because nothing else here can do it
 
-v0.19 said *press the power button now*. That is a race, and it is not one a person can be expected
-to win: the pairing request arrives four or five seconds after the bond starts, and the platform
-decides which branch to take **when the request arrives**, not when the bond began. Press it a
-second late and Settings crashes exactly as before.
+Five releases spent on the app side of this, and the app side was never where it could be fixed.
+Every route the platform offers ends at the same activity:
 
-**So the app waits for the screen instead.** Pairing now holds until `ACTION_SCREEN_OFF` actually
-fires, waits a beat for `isInteractive` to catch up with it, and only then asks. Lock the phone
-whenever you like; the request goes out on your timing, not against it.
+- **Awake**, the request opens `com.android.settings/.bluetooth.BluetoothPairingDialog`. LightOS's
+  fragment builds a **null** dialog for the consent variant and dies in `DialogFragment.prepareDialog`.
+- **Asleep**, the request is posted as a notification instead — v0.20 got that far, and the
+  notification really is posted, with a "Pair & connect" button, and this app's listener really does
+  press it. That button fires `ACTION_PAIRING_DIALOG`, whose only job is to start the same activity.
+  It crashed the pairing service too.
+- **The companion-association route** (v0.16–v0.19) never flipped `canBondWithoutDialog`, with the
+  exact address, a plain association and under a second between approval and the bond.
 
-```java
-} else if (powerManager.isInteractive() && shouldShowDialog) {
-    context.startActivityAsUser(pairingIntent, …);   // the dialog LightOS cannot build
-} else {
-    context.startServiceAsUser(intent, …);           // a notification, with a Pair button
-}
+Three routes, one dead end. There is no fourth.
+
+**So: `setPairingConfirmation`, which answers a request with no UI at all.** Its permission is
+`BLUETOOTH_PRIVILEGED` — `signature|privileged`, unreachable for a sideloaded app and always will
+be. But `com.android.shell` holds it granted, along with `BLUETOOTH_STACK`, and BrightControl has
+held an adb shell since its first release.
+
+**Pair through BrightControl** hands over one line — `confirm pairing <MAC>` — and BrightControl
+(v3.43 or newer) rebuilds the command itself:
+
+```
+sh -c 'CLASSPATH=<this app's own APK> app_process / com.gios.brightoura.helper.Confirm <MAC> 24000'
 ```
 
-`shouldShowDialog` is not ours to move — it is true whenever Settings has recently seen the device,
-which on a phone whose Bluetooth screen keeps getting opened is most of the time. `isInteractive` is
-the half a person can change, and the two are joined by `&&`, so a sleeping screen settles it alone.
-The notification that gets posted instead has a Pair button, and pressing that button is the entire
-job of the listener this app has shipped for five releases without it ever firing once.
+The class is new here, and it is the only new code in this release: it asks for the bond, then
+answers the request it raised, in one loop as one uid. Confirming from one process while bonding
+from another is a race across a consent screen, and there was nothing to be gained by keeping them
+apart — a bond belongs to the phone, not to whoever asked for it. It clears a half-made bond first,
+because one of those poisons every attempt after it, and it reports each state change so a failure
+says which step failed.
 
-**The retry waits too.** A failed first attempt means a crashed Settings and a phone somebody has
-just picked up to look at — so by then the screen is awake again, and asking from there would take
-the same branch a second time.
+Nothing is dropped in shared storage and no dex ships: the helper lives inside this APK, which is
+world-readable, and `app_process` is pointed straight at it. Nothing is left behind afterwards.
 
-Forty-five seconds to lock it, and if the screen never goes off the attempt still goes ahead rather
-than hanging: a pairing that might work beats one that certainly did not happen. The screen says
-which of those it is doing.
+The old routes are still on the screen, one row down, honestly labelled — they are the ones that
+would work on a phone whose pairing dialog is not broken.

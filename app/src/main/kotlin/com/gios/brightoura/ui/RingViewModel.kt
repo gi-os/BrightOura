@@ -493,6 +493,68 @@ class RingViewModel(app: Application) : AndroidViewModel(app) {
     }.getOrDefault(false)
 
     /**
+     * Pair through the shell, which is the only thing on this phone that can accept the request.
+     *
+     * ### Why this is the route and not a route
+     *
+     * Every path an app has ends at the same activity. A consent request becomes
+     * `com.android.settings/.bluetooth.BluetoothPairingDialog`; LightOS's fragment builds a null
+     * dialog for that variant and takes Settings down with it. Asleep, the request is posted as a
+     * notification instead — and pressing its Pair button fires `ACTION_PAIRING_DIALOG`, which
+     * starts the same activity and crashes the pairing service too. Confirmed all three, in that
+     * order, over five releases.
+     *
+     * [android.bluetooth.BluetoothDevice.setPairingConfirmation] answers with no UI whatsoever.
+     * Its permission is `BLUETOOTH_PRIVILEGED`, which is `signature|privileged` and so unreachable
+     * here for good — but `com.android.shell` holds it, and BrightControl holds a shell.
+     *
+     * ### What actually crosses over
+     *
+     * One address. BrightControl rebuilds the command from the APK path *it* resolves for this
+     * package and this package's own [com.gios.brightoura.helper.Confirm], so what runs is code
+     * already shipped here and already installed by the user — running as the shell for as long as
+     * one command takes, and no longer. It asks before it runs it.
+     *
+     * The helper does the bonding as well as the answering. Confirming from one process while
+     * bonding from another is a race across a consent screen, and there is nothing to gain by
+     * keeping the two apart: a bond belongs to the phone, not to whoever asked for it.
+     */
+    fun pairViaShell(address: String) {
+        val app = getApplication<Application>()
+        Trace.begin("shell pairing $address")
+        val intent = android.content.Intent("com.gios.lightcontrol.action.RUN_GRANTS")
+            .putExtra("com.gios.lightcontrol.extra.PACKAGE", app.packageName)
+            .putStringArrayListExtra(
+                "com.gios.lightcontrol.extra.COMMANDS",
+                arrayListOf("confirm pairing $address"),
+            )
+            .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+        val handed = runCatching { app.startActivity(intent); true }.getOrDefault(false)
+        say(
+            if (handed) {
+                "BrightControl has it. Approve the line there and leave it — it asks for the bond " +
+                    "and answers the request itself, then come back and probe."
+            } else {
+                "BrightControl is not installed, and it is the only thing here holding an adb " +
+                    "shell. Nothing else on this phone can accept a pairing request."
+            },
+        )
+        if (!handed) {
+            Trace.add("BrightControl not installed")
+            runCatching {
+                app.getSystemService(android.content.ClipboardManager::class.java)
+                    ?.setPrimaryClip(
+                        android.content.ClipData.newPlainText(
+                            "pair",
+                            "adb shell 'CLASSPATH=$(pm path ${app.packageName} | cut -d: -f2) " +
+                                "app_process / ${app.packageName}.helper.Confirm $address'",
+                        ),
+                    )
+            }
+        }
+    }
+
+    /**
      * Ask BrightControl to grant the listener.
      *
      * It holds an adb shell of its own and already accepts exactly this shape of request — one

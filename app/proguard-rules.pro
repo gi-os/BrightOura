@@ -52,3 +52,14 @@
 # source file attribute to a fixed string so it does not leak a local path.
 -keepattributes SourceFile,LineNumberTable
 -renamesourcefileattribute SourceFile
+
+# ---------------------------------------------------------------- the shell helper
+#
+# com.gios.brightoura.helper.Confirm is never called from inside this app. It is a `main` class
+# run out of this APK by `app_process`, from the adb shell BrightControl holds, because the shell
+# is the only process on this phone that may accept a Bluetooth pairing request (see the class
+# doc). R8 sees no caller, so without this it removes the class outright — or renames it, which is
+# the same thing to a command line naming it by string.
+-keep class com.gios.brightoura.helper.Confirm {
+    public static void main(java.lang.String[]);
+}
