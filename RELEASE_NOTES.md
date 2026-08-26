@@ -1,34 +1,32 @@
-## BrightOura v0.19 — pair it with the screen off
+## BrightOura v0.20 — it waits for the screen to go off, instead of asking you to be quick
 
-**The notification listener has never fired once, and now I know why.** It was built to press the
-Pair button on the system's pairing notification, on the theory that LightOS posts the notification
-and never draws it. Wrong half. Here is what the platform actually does with a pairing request, one
-line below the check the last three releases were about:
+v0.19 said *press the power button now*. That is a race, and it is not one a person can be expected
+to win: the pairing request arrives four or five seconds after the bond starts, and the platform
+decides which branch to take **when the request arrives**, not when the bond began. Press it a
+second late and Settings crashes exactly as before.
+
+**So the app waits for the screen instead.** Pairing now holds until `ACTION_SCREEN_OFF` actually
+fires, waits a beat for `isInteractive` to catch up with it, and only then asks. Lock the phone
+whenever you like; the request goes out on your timing, not against it.
 
 ```java
 } else if (powerManager.isInteractive() && shouldShowDialog) {
-    context.startActivityAsUser(pairingIntent, …);   // the dialog
+    context.startActivityAsUser(pairingIntent, …);   // the dialog LightOS cannot build
 } else {
-    context.startServiceAsUser(intent, …);           // a notification
+    context.startServiceAsUser(intent, …);           // a notification, with a Pair button
 }
 ```
 
-Awake, the phone starts the dialog **activity** — and on LightOS that activity builds a null dialog
-for the consent variant and takes Settings down with it. There was never a notification to answer.
-Every attempt so far has been made with the screen on, so the crashing branch won every time,
-including the ones from inside the Bluetooth screen, where `shouldShowDialog` is true by definition.
+`shouldShowDialog` is not ours to move — it is true whenever Settings has recently seen the device,
+which on a phone whose Bluetooth screen keeps getting opened is most of the time. `isInteractive` is
+the half a person can change, and the two are joined by `&&`, so a sleeping screen settles it alone.
+The notification that gets posted instead has a Pair button, and pressing that button is the entire
+job of the listener this app has shipped for five releases without it ever firing once.
 
-**Asleep, the same request is posted as a notification.** A notification has buttons, and pressing
-that button is precisely what this app's listener does. No dialog is started, so Settings is never
-involved, so nothing crashes.
+**The retry waits too.** A failed first attempt means a crashed Settings and a phone somebody has
+just picked up to look at — so by then the screen is awake again, and asking from there would take
+the same branch a second time.
 
-So the app now says so at the moment it matters — as the request goes out, not afterwards: *press
-the power button now.* And if the listener grant is missing it says that first, because a sleeping
-phone with nobody to answer the request is worse than an awake one: it fails silently and looks like
-the ring's fault.
-
-**Also worth writing down: the bond is not optional.** Independent work on the Ring 3 Horizon finds
-that after a factory reset, link encryption is required before any notify subscription or write —
-the app-level auth key cannot be installed over an unencrypted link. So there is no version of this
-that skips pairing and goes straight to the protocol. The bond has to happen; this is the route by
-which it can.
+Forty-five seconds to lock it, and if the screen never goes off the attempt still goes ahead rather
+than hanging: a pairing that might work beats one that certainly did not happen. The screen says
+which of those it is doing.

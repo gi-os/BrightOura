@@ -740,6 +740,16 @@ class Ring private constructor(
                     onProgress("The phone would not start pairing (permission, or the ring refused)")
                     return false
                 }
+                // **Wait for the screen to be off before asking, rather than after.**
+                //
+                // Which branch the platform takes is decided when the *request arrives*, not when
+                // the bond starts — so telling somebody to press the power button "now" is a race
+                // against a request four seconds away, and losing it costs a crashed Settings and
+                // a minute of nothing. Waiting for the screen makes it a fact instead of a hope.
+                if (!awaitScreenOff(context, onProgress)) {
+                    Trace.add("screen stayed on — asking anyway")
+                }
+
                 // **Tell them to put the phone to sleep, and mean it.**
                 //
                 // Which of these the platform does with a pairing request is decided one line
@@ -758,10 +768,7 @@ class Ring private constructor(
                 // as a notification** — which has a Pair button, and which
                 // [com.gios.brightoura.notify.PairingListener] exists to press. The listener has
                 // never fired once, and this is why: the phone was awake for every attempt.
-                onProgress(
-                    "Press the power button now. Asleep, the phone posts this as a notification " +
-                        "this app can answer; awake, it opens the dialog that crashes Settings.",
-                )
+                onProgress("Pairing… leave the screen off until this says otherwise")
                 var bonded = withTimeoutOrNull(BOND_MS) { done.receive() } ?: false
 
                 // **One retry, and only for the failure a retry actually fixes.**
@@ -792,6 +799,10 @@ class Ring private constructor(
                     // attempt failed before the ring had been asked anything. Drop what the
                     // teardown left; anything after this point is an answer to the new request.
                     while (done.tryReceive().isSuccess) Unit
+                    // The first attempt failing usually means a crashed Settings and a phone
+                    // somebody has just picked up to look at. So the screen is awake again, and
+                    // asking from here without waiting is asking for the same branch twice.
+                    awaitScreenOff(context, onProgress)
                     val again = runCatching { device.createBond() }.getOrDefault(false)
                     Trace.add("retry createBond started=$again (state ${device.bondState})")
                     if (again) bonded = withTimeoutOrNull(BOND_MS) { done.receive() } ?: false
@@ -873,6 +884,80 @@ class Ring private constructor(
 
         /** The ring's own MTU, from the captures. */
         private const val MTU = 203
+
+        /**
+         * Hold until the phone is actually asleep, because that is what decides the branch.
+         *
+         * ```java
+         * } else if (powerManager.isInteractive() && shouldShowDialog) {
+         *     context.startActivityAsUser(pairingIntent, …);   // the dialog that crashes here
+         * } else {
+         *     context.startServiceAsUser(intent, …);           // a notification, with a Pair button
+         * }
+         * ```
+         *
+         * `shouldShowDialog` is not ours to influence — it is true whenever Settings has recently
+         * seen the device, which on a phone where the Bluetooth screen keeps being opened is most
+         * of the time. `isInteractive` is the half a person can change, and it is an `&&`, so the
+         * screen being off is enough on its own.
+         *
+         * Returns true when the phone is asleep, false when it never went to sleep. False is not an
+         * error: the attempt still goes ahead, because a pairing that might work beats a pairing
+         * that certainly did not happen, and somebody watching the screen deserves to see it try.
+         */
+        private suspend fun awaitScreenOff(context: Context, onProgress: (String) -> Unit): Boolean {
+            val power = context.getSystemService(android.os.PowerManager::class.java)
+            if (power?.isInteractive == false) {
+                Trace.add("screen already off")
+                return true
+            }
+            onProgress(
+                "Lock the phone now — pairing starts the moment the screen goes off. Asleep, the " +
+                    "request arrives as a notification this app can answer; awake, it opens the " +
+                    "dialog that crashes Settings.",
+            )
+            val gate = Channel<Unit>(Channel.CONFLATED)
+            val receiver = object : android.content.BroadcastReceiver() {
+                override fun onReceive(c: Context?, intent: android.content.Intent?) {
+                    if (intent?.action == android.content.Intent.ACTION_SCREEN_OFF) {
+                        gate.trySend(Unit)
+                    }
+                }
+            }
+            val filter = android.content.IntentFilter(android.content.Intent.ACTION_SCREEN_OFF)
+            runCatching {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    context.registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED)
+                } else {
+                    context.registerReceiver(receiver, filter)
+                }
+            }
+            return try {
+                val slept = withTimeoutOrNull(SCREEN_OFF_MS) { gate.receive() } != null
+                if (slept) {
+                    // The broadcast goes out as the screen turns off, and `isInteractive` can still
+                    // read true for a moment after it. The request is seconds away; a beat here
+                    // costs nothing and removes the last piece of the race.
+                    kotlinx.coroutines.delay(1_200)
+                    Trace.add("screen off — asking now")
+                    onProgress("Screen off. Asking now.")
+                } else {
+                    onProgress("The screen stayed on — trying anyway, but this is the attempt " +
+                        "that opens the dialog")
+                }
+                slept
+            } finally {
+                runCatching { context.unregisterReceiver(receiver) }
+            }
+        }
+
+        /**
+         * How long to wait for somebody to lock the phone.
+         *
+         * Long enough to find the button on a phone in a pocket, short enough that a run left
+         * alone still finishes rather than hanging on a screen that says nothing.
+         */
+        private const val SCREEN_OFF_MS = 45_000L
 
         /** `BluetoothDevice.PAIRING_VARIANT_CONSENT` — the variant this phone cannot draw. */
         private const val VARIANT_CONSENT = 3
