@@ -105,19 +105,7 @@ public final class Confirm {
                     + "), using the system one");
         }
 
-        // Two routes to the adapter, because in a bare `app_process` neither is reliable on its
-        // own: the manager wants a context with a real ActivityThread behind it, and the static
-        // default wants a process the framework has initialised. Whichever answers, answers.
-        BluetoothAdapter adapter = null;
-        BluetoothManager manager =
-                (BluetoothManager) context.getSystemService(Context.BLUETOOTH_SERVICE);
-        if (manager != null) {
-            adapter = manager.getAdapter();
-        }
-        if (adapter == null) {
-            adapter = BluetoothAdapter.getDefaultAdapter();
-            if (adapter != null) System.out.println("note: using the default adapter");
-        }
+        BluetoothAdapter adapter = adapter(context);
         if (adapter == null) {
             System.out.println("FAILED no bluetooth adapter in this process");
             return;
@@ -217,6 +205,80 @@ public final class Confirm {
             System.out.println(method + " " + result);
         } catch (Throwable t) {
             System.out.println(method + " unavailable (" + t.getClass().getSimpleName() + ")");
+        }
+    }
+
+    /**
+     * Reach the Bluetooth adapter from a process the framework never finished setting up.
+     *
+     * ### Why this needs three attempts
+     *
+     * Since Android 13 the Bluetooth stack lives in its own mainline module, and the wrapper that
+     * answers `getSystemService(BLUETOOTH_SERVICE)` is registered by module initialisation that
+     * runs when an *application* starts. `app_process` starting a plain main class is not an
+     * application, so that registration may never have happened — and the symptom is not an
+     * exception, it is `null`, twice, from both of the routes anybody would try first.
+     *
+     * The third route is the one {@code BluetoothManager} uses on the inside:
+     * {@code BluetoothAdapter.createAdapter(AttributionSource)}, which goes straight to the
+     * {@code bluetooth_manager} binder without needing any of the module plumbing above it. It is
+     * hidden, so it is reflected; the attribution source is built for this process's real uid and
+     * for {@code com.android.shell}, which is the package whose privileges the far side will check.
+     *
+     * Every step says whether it worked, because "no adapter" on its own does not say which of
+     * three quite different things went wrong.
+     */
+    private static BluetoothAdapter adapter(Context context) {
+        System.out.println("bluetooth_manager binder: " + hasService("bluetooth_manager"));
+
+        BluetoothManager manager = null;
+        try {
+            manager = (BluetoothManager) context.getSystemService(Context.BLUETOOTH_SERVICE);
+        } catch (Throwable t) {
+            System.out.println("getSystemService threw " + t.getClass().getSimpleName());
+        }
+        System.out.println("manager: " + (manager == null ? "null" : "ok"));
+        if (manager != null) {
+            BluetoothAdapter fromManager = manager.getAdapter();
+            System.out.println("manager.getAdapter(): " + (fromManager == null ? "null" : "ok"));
+            if (fromManager != null) return fromManager;
+        }
+
+        BluetoothAdapter fromStatic = null;
+        try {
+            fromStatic = BluetoothAdapter.getDefaultAdapter();
+        } catch (Throwable t) {
+            System.out.println("getDefaultAdapter threw " + t.getClass().getSimpleName());
+        }
+        System.out.println("getDefaultAdapter(): " + (fromStatic == null ? "null" : "ok"));
+        if (fromStatic != null) return fromStatic;
+
+        // The route with no module plumbing in front of it.
+        try {
+            Object source = new android.content.AttributionSource.Builder(
+                    android.os.Process.myUid())
+                    .setPackageName("com.android.shell")
+                    .build();
+            java.lang.reflect.Method create = BluetoothAdapter.class.getMethod(
+                    "createAdapter", android.content.AttributionSource.class);
+            BluetoothAdapter built = (BluetoothAdapter) create.invoke(null, source);
+            System.out.println("createAdapter(): " + (built == null ? "null" : "ok"));
+            return built;
+        } catch (Throwable t) {
+            System.out.println("createAdapter threw " + t.getClass().getSimpleName()
+                    + ": " + t.getMessage());
+        }
+        return null;
+    }
+
+    /** Whether a system service of that name is registered at all. */
+    private static String hasService(String name) {
+        try {
+            java.lang.reflect.Method get = Class.forName("android.os.ServiceManager")
+                    .getMethod("getService", String.class);
+            return get.invoke(null, name) == null ? "missing" : "present";
+        } catch (Throwable t) {
+            return "unaskable (" + t.getClass().getSimpleName() + ")";
         }
     }
 

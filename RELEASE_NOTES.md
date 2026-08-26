@@ -1,30 +1,34 @@
-## BrightOura v0.24 — "bluetooth is off" was the helper being unable to see, not the phone being off
-
-The pairing helper stopped before it started, on a phone with Bluetooth plainly on:
+## BrightOura v0.25 — a third route to the Bluetooth adapter, and a diagnosis when there is none
 
 ```
-FAILED bluetooth is off
+FAILED no bluetooth adapter in this process
 ```
 
-That was my own guard, and it could not tell the difference between two very different things. The
-helper runs under `app_process` — a bare VM with no ActivityThread behind it — and in that process
-the adapter cannot always reach the Bluetooth service. When it cannot, `isEnabled()` returns
-**false** rather than throwing. So a defensive check meant to catch "you forgot to turn Bluetooth on"
-became the only thing standing between a working phone and a bond.
+Both of the obvious routes returned **null** — not an exception, null, which is the least helpful
+thing a framework can say. The cause is structural: since Android 13 the Bluetooth stack lives in its
+own mainline module, and the wrapper that answers `getSystemService(BLUETOOTH_SERVICE)` is registered
+during *application* initialisation. `app_process` running a plain main class is not an application,
+so that registration may never have happened at all.
 
-**It no longer refuses to continue.** If Bluetooth genuinely is off, `createBond` and
-`setPairingConfirmation` fail on their own and give reasons that are actually true. A check that
-cannot distinguish "off" from "cannot see" is worse than no check.
+**The third route is the one `BluetoothManager` uses on the inside:**
+`BluetoothAdapter.createAdapter(AttributionSource)` — straight to the `bluetooth_manager` binder with
+none of the module plumbing above it. Hidden, so reflected; the attribution source is built for this
+process's real uid and for `com.android.shell`, which is the package whose privileges the far side
+checks anyway.
 
-**And it prints a second opinion instead**, from a source that does not depend on this process
-having a working adapter:
+**And every step now says whether it worked**, because "no adapter" does not distinguish three quite
+different failures:
 
 ```
-adapter state 10 enabled=false setting bluetooth_on=1
+bluetooth_manager binder: present
+manager: ok
+manager.getAdapter(): null
+getDefaultAdapter(): null
+createAdapter(): ok
+adapter state 12 enabled=true setting bluetooth_on=1
 createBond true
-state BONDING
 ```
 
-`bluetooth_on=1` with an adapter reporting disabled is the exact signature of the bug — and now it is
-on screen rather than hidden behind a refusal. Two routes to the adapter are tried as well, the
-manager and the static default, because in a bare process neither is reliable alone.
+If the binder itself comes back `missing`, no route can work and the answer is not another route —
+it is that this process cannot reach Bluetooth at all, and the helper has to be launched some other
+way. That is worth knowing in one line rather than three evenings.
