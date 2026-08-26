@@ -662,7 +662,17 @@ class Ring private constructor(
                     if (which?.address != device.address) return
                     when (intent.getIntExtra(BluetoothDevice.EXTRA_BOND_STATE, -1)) {
                         BluetoothDevice.BOND_BONDED -> done.trySend(true)
-                        BluetoothDevice.BOND_NONE -> done.trySend(false)
+                        BluetoothDevice.BOND_NONE -> {
+                            // **The reason is the diagnosis.** "Couldn't pair — incorrect PIN or
+                            // passkey" is the one sentence the system shows for eight different
+                            // failures, and they point in completely different directions: nobody
+                            // answered, the ring said no, the phone gave up, or it has been tried
+                            // too many times and is now refusing on principle.
+                            val reason = intent.getIntExtra(REASON_EXTRA, -1)
+                            Trace.add("bond failed: ${bondReason(reason)}")
+                            onProgress("Pairing failed — ${bondReason(reason)}")
+                            done.trySend(false)
+                        }
                     }
                 }
             }
@@ -682,6 +692,15 @@ class Ring private constructor(
             // notification is never rendered — see [Pairing] — so something has to either answer it
             // or put it on screen, and both of those live there.
             val watcher = Pairing.watch(context, onProgress)
+            // A previous half-bond poisons every attempt after it: the phone thinks it holds
+            // something the ring does not, and the next pairing fails as "incorrect PIN" forever.
+            if (device.bondState != BluetoothDevice.BOND_BONDED) {
+                if (forgetBond(device)) {
+                    Trace.add("cleared a half-made bond first")
+                    onProgress("Clearing what was left of the last attempt")
+                    kotlinx.coroutines.delay(600)
+                }
+            }
             return try {
                 // LE first. The plain call may try classic pairing against a device that only
                 // speaks LE, which is exactly the "pairing… pairing… nothing" this phone shows from
@@ -776,6 +795,43 @@ class Ring private constructor(
 
         /** The ring's own MTU, from the captures. */
         private const val MTU = 203
+
+        /**
+         * Why a bond ended, in words.
+         *
+         * From `BluetoothDevice`'s own unbond reasons, which are hidden constants but stable ones.
+         * The phone shows "incorrect PIN or passkey" for most of these, which is true of exactly
+         * one of them.
+         */
+        private fun bondReason(reason: Int): String = when (reason) {
+            1 -> "authentication failed — the keys did not match"
+            2 -> "the ring refused"
+            3 -> "somebody cancelled it"
+            4 -> "the ring stopped answering"
+            5 -> "a scan was in progress"
+            6 -> "nothing confirmed it in time"
+            7 -> "too many attempts — the phone is refusing for now"
+            8 -> "the ring cancelled it"
+            9 -> "the phone removed the bond"
+            else -> "no reason given ($reason)"
+        }
+
+        /** `BluetoothDevice.EXTRA_REASON`, which is hidden and has never moved. */
+        private const val REASON_EXTRA = "android.bluetooth.device.extra.REASON"
+
+        /**
+         * Forget a half-made bond before trying again.
+         *
+         * A failed pairing leaves the device in a state where every later attempt fails the same
+         * way — the phone believes it holds something it does not. `removeBond` has been hidden
+         * since forever and is the standard way to clear it; failing quietly is fine, because a
+         * device that was never bonded has nothing to remove.
+         */
+        @SuppressLint("MissingPermission")
+        fun forgetBond(device: BluetoothDevice): Boolean = runCatching {
+            val method = BluetoothDevice::class.java.getMethod("removeBond")
+            (method.invoke(device) as? Boolean) == true
+        }.onFailure { Trace.add("removeBond: ${it.javaClass.simpleName}") }.getOrDefault(false)
 
         /** How long the system pairing prompt is waited on. A person has to find it first. */
         private const val BOND_MS = 60_000L

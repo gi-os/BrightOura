@@ -246,6 +246,19 @@ fun SetupScreen(vm: RingViewModel, onDone: () -> Unit) {
                     onClick = { vm.openBluetoothSettings() },
                 )
                 MenuRow(
+                    label = "Press Pair for me",
+                    detail = if (vm.listenerEnabled()) "ON" else "GRANT",
+                    sub = if (vm.listenerEnabled()) {
+                        "The pairing request is a notification with a Pair button on it. This app " +
+                            "can press it — the button runs as the system, so it needs none of the " +
+                            "permissions confirming a pairing normally does."
+                    } else {
+                        "The request this phone never draws still has a Pair button in it. One adb " +
+                            "line lets this app press it; BrightControl can run it for you."
+                    },
+                    onClick = { vm.grantListener() },
+                )
+                MenuRow(
                     label = "Let the phone pair it",
                     detail = if (busy) "…" else "SYSTEM",
                     sub = "Runs the phone's own device picker — an actual dialog, not a " +

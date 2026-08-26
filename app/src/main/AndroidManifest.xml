@@ -55,5 +55,26 @@
 
         </activity>
 
+        <!--
+          The last way in on a phone that never draws a pairing request: the notification carries a
+          Pair action, its PendingIntent runs as the system that created it, and pressing it needs
+          none of the permissions confirming a pairing normally does. Switched on with one adb line,
+          the same shape BrightControl uses for its lock face:
+
+            adb shell cmd notification allow_listener com.gios.brightoura/.notify.PairingListener
+
+          Reads only Bluetooth pairing notifications, presses only buttons whose words mean yes.
+          See notify/PairingListener.kt.
+        -->
+        <service
+            android:name=".notify.PairingListener"
+            android:exported="true"
+            android:label="@string/app_name"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
+
     </application>
 </manifest>

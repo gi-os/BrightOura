@@ -372,6 +372,51 @@ class RingViewModel(app: Application) : AndroidViewModel(app) {
         say("Copied. Run them from BrightControl's ADB screen — none of them change anything.")
     }
 
+    /**
+     * Whether the notification listener is switched on.
+     *
+     * The thing that lets this app press the Pair button on a request the phone never draws. Asked
+     * of the system's own list rather than remembered, because the grant is given outside this app
+     * and can be taken away the same way.
+     */
+    fun listenerEnabled(): Boolean = runCatching {
+        val flat = android.provider.Settings.Secure.getString(
+            getApplication<Application>().contentResolver,
+            "enabled_notification_listeners",
+        ).orEmpty()
+        flat.contains(getApplication<Application>().packageName)
+    }.getOrDefault(false)
+
+    /**
+     * Ask BrightControl to grant the listener.
+     *
+     * It holds an adb shell of its own and already accepts exactly this shape of request — one
+     * `cmd notification allow_listener` line, shown to the user before it runs. If BrightControl is
+     * not installed the command goes to the clipboard instead, which is the same line by hand.
+     */
+    fun grantListener() {
+        val app = getApplication<Application>()
+        val command = "cmd notification allow_listener " +
+            "${app.packageName}/${app.packageName}.notify.PairingListener"
+        val intent = android.content.Intent("com.gios.lightcontrol.action.RUN_GRANTS")
+            .putExtra("com.gios.lightcontrol.extra.PACKAGE", app.packageName)
+            .putStringArrayListExtra(
+                "com.gios.lightcontrol.extra.COMMANDS",
+                arrayListOf(command),
+            )
+            .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+        val handed = runCatching { app.startActivity(intent); true }.getOrDefault(false)
+        if (handed) {
+            say("BrightControl has the command — approve it there, then come back.")
+            return
+        }
+        runCatching {
+            app.getSystemService(android.content.ClipboardManager::class.java)
+                ?.setPrimaryClip(android.content.ClipData.newPlainText("grant", "adb shell $command"))
+        }
+        say("BrightControl is not here. The adb line is on the clipboard.")
+    }
+
     /** Whether a ring's advertised name says it has never been keyed. See [Session.looksUnkeyed]. */
     fun looksUnkeyed(name: String?): Boolean = session.looksUnkeyed(name)
 

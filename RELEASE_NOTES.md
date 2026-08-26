@@ -1,3 +1,37 @@
+## BrightOura v0.14 — press the button nobody can see
+
+**"Couldn't pair — incorrect PIN or passkey" is progress, and it is also the system lying to you.**
+That one sentence is shown for eight different failures, and only one of them is a wrong key. The
+others are: nobody confirmed it in time, the ring refused, the phone gave up, a scan was running, or
+it has been tried so often the phone is now refusing on principle. The bond's real reason is in the
+broadcast, it has always been there, and this release reads it and says which one happened.
+
+**And it clears the wreckage first.** A failed pairing leaves the phone believing it holds something
+the ring does not, and every attempt after that fails identically — which is exactly the shape of
+"it worked differently the first time and never again". `removeBond` is called before each attempt,
+so each one starts from nothing.
+
+## Pressing Pair
+
+**The request this phone never draws still has a Pair button in it.** A pairing request is a
+notification, the notification carries actions, and each action holds a `PendingIntent` — which runs
+as *whoever created it*. The creator is the system. So firing that action needs none of the
+permissions confirming a pairing normally does: it is the same thing that would happen if somebody
+tapped a button that cannot be seen.
+
+LightOS posts notifications perfectly well — BrightControl's lock face lists them. It simply never
+*draws* this one, because it arrives with a full-screen intent nothing here honours. The notification
+exists. Only the pixels are missing.
+
+So: **Setup → Press Pair for me.** It needs a notification listener, which on this phone is one adb
+line — and BrightControl already accepts exactly that shape of request, so the app hands it over and
+you approve it there. If BrightControl is not installed, the line goes to the clipboard instead.
+
+The listener is deliberately narrow: only notifications from the Bluetooth stack, Settings or the
+system, only ones whose words say pairing, and only buttons whose words mean yes. If there is no
+button it sends the full-screen intent instead — which is what the launcher was supposed to do, and
+at worst puts the real dialog on screen.
+
 ## BrightOura v0.13 — the commands worth running, and the one that does not exist
 
 **There is no adb command that pairs a device.** Not on this phone, not on any of them: the platform
