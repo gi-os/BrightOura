@@ -279,6 +279,16 @@ class RingViewModel(app: Application) : AndroidViewModel(app) {
         Companions.prune(getApplication(), keep = address)
         work("pair the Bluetooth link") {
             step("Associated $address — pairing now, while the phone still allows it")
+            // Without this grant the notification route below has nobody to answer it, and a
+            // sleeping phone is then a phone with an unanswered request on it rather than a
+            // paired ring. Said before the attempt, because after it the wording reads like an
+            // excuse.
+            if (!listenerEnabled()) {
+                say(
+                    "Reading notifications is off, so nothing can press Pair while the screen is " +
+                        "asleep. Switch it on first — it is the one grant this needs.",
+                )
+            }
             val ok = withContext(Dispatchers.IO) {
                 Ring.bondWith(getApplication(), address) { line -> Trace.add(line); step(line) }
             }

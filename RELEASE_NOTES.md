@@ -1,25 +1,34 @@
-## BrightOura v0.18 — losing the race is now something the app recovers from
+## BrightOura v0.19 — pair it with the screen off
 
-v0.17 stopped the *system* from bonding the ring before we could, by dropping the watch profile from
-the association. That closes one of the two ways to lose the race. This closes the other, and makes
-losing it survivable either way.
+**The notification listener has never fired once, and now I know why.** It was built to press the
+Pair button on the system's pairing notification, on the theory that LightOS posts the notification
+and never draws it. Wrong half. Here is what the platform actually does with a pairing request, one
+line below the check the last three releases were about:
 
-**The ring can start the pairing itself.** A peripheral may ask for security the moment a link is
-up, and that path goes nowhere near `createBond` — so no caller is recorded against the address, and
-`canBondWithoutDialog` reads false for the same reason it did when the system got there first. On
-this phone that means the consent dialog, and the consent dialog means Settings crashing. Nothing
-this app does before the fact can prevent a remote device from asking.
+```java
+} else if (powerManager.isInteractive() && shouldShowDialog) {
+    context.startActivityAsUser(pairingIntent, …);   // the dialog
+} else {
+    context.startServiceAsUser(intent, …);           // a notification
+}
+```
 
-**So the app now asks again, properly, once.** A consent request arriving is the tell that the bond
-was not credited to us. By the time it is known, everything needed to fix it is true: the bond that
-beat us has failed and torn itself down, nothing is in flight, and the companion association is
-still minutes from expiring. Asking from there is the first `createBond` of a fresh attempt, which
-is the entire point. Once only — a retry loop is a phone that pairs forever and never says why.
+Awake, the phone starts the dialog **activity** — and on LightOS that activity builds a null dialog
+for the consent variant and takes Settings down with it. There was never a notification to answer.
+Every attempt so far has been made with the screen on, so the crashing branch won every time,
+including the ones from inside the Bluetooth screen, where `shouldShowDialog` is true by definition.
 
-**And the retry no longer answers itself.** The bond-state channel is conflated, so the `BOND_NONE`
-announced by tearing down the failed attempt was still sitting in it: the retry's wait would have
-received that stale failure instantly and reported a minute-long timeout that never happened. The
-teardown's noise is dropped before the new request goes out.
+**Asleep, the same request is posted as a notification.** A notification has buttons, and pressing
+that button is precisely what this app's listener does. No dialog is started, so Settings is never
+involved, so nothing crashes.
 
-The screen says which of these it is as it happens, rather than after: *"That pairing was not
-credited to this app — asking again, properly."*
+So the app now says so at the moment it matters — as the request goes out, not afterwards: *press
+the power button now.* And if the listener grant is missing it says that first, because a sleeping
+phone with nobody to answer the request is worse than an awake one: it fails silently and looks like
+the ring's fault.
+
+**Also worth writing down: the bond is not optional.** Independent work on the Ring 3 Horizon finds
+that after a factory reset, link encryption is required before any notify subscription or write —
+the app-level auth key cannot be installed over an unencrypted link. So there is no version of this
+that skips pairing and goes straight to the protocol. The bond has to happen; this is the route by
+which it can.

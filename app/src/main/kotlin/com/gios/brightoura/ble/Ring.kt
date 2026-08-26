@@ -740,8 +740,27 @@ class Ring private constructor(
                     onProgress("The phone would not start pairing (permission, or the ring refused)")
                     return false
                 }
+                // **Tell them to put the phone to sleep, and mean it.**
+                //
+                // Which of these the platform does with a pairing request is decided one line
+                // below the check everyone looks at:
+                //
+                // ```java
+                // } else if (powerManager.isInteractive() && shouldShowDialog) {
+                //     context.startActivityAsUser(pairingIntent, …);   // the dialog
+                // } else {
+                //     context.startServiceAsUser(intent, …);           // a notification
+                // }
+                // ```
+                //
+                // Awake, this phone starts the dialog activity, and its consent dialog is the one
+                // that returns null and takes Settings down. **Asleep, the same request is posted
+                // as a notification** — which has a Pair button, and which
+                // [com.gios.brightoura.notify.PairingListener] exists to press. The listener has
+                // never fired once, and this is why: the phone was awake for every attempt.
                 onProgress(
-                    "Pairing… most rings pair with no prompt at all, so this may just finish",
+                    "Press the power button now. Asleep, the phone posts this as a notification " +
+                        "this app can answer; awake, it opens the dialog that crashes Settings.",
                 )
                 var bonded = withTimeoutOrNull(BOND_MS) { done.receive() } ?: false
 
