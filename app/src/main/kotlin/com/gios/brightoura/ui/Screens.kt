@@ -286,6 +286,15 @@ fun SetupScreen(vm: RingViewModel, onDone: () -> Unit) {
                     detail = if (p.link.contains("NOT subscribed")) "NO PUSH" else "OK",
                 )
                 MenuRow(
+                    label = "Channels that answered",
+                    detail = "${p.others.size}",
+                    sub = if (p.others.isEmpty()) {
+                        "None of the undocumented characteristics answered a plain read"
+                    } else {
+                        p.others.first().take(60)
+                    },
+                )
+                MenuRow(
                     label = "What the ring offers",
                     sub = p.gatt.lineSequence().count { it.isNotBlank() }.let {
                         "$it lines — in the diagnosis, ready to paste"

@@ -1,3 +1,37 @@
+## BrightOura v0.12 — a refused read, and three channels nobody has written about
+
+**The GATT dump changed the picture, and it also caught a bug of mine.**
+
+**The bug first: the reads were never actually happening.** Android runs one GATT operation at a
+time and will not queue them — a read issued while a write is still in flight is refused outright,
+`readCharacteristic` returns false, and nothing arrives. The polling path wrote a request and asked
+for the answer in the same breath, so every read was a silent refusal. Writes are awaited now, reads
+are retried, and **every status is reported**: 5 or 15 would mean "readable, but only over an
+encrypted link", which would settle this question for good, and anything else means something else
+entirely.
+
+**And the ring has more to it than the notes say.** The protocol writeups describe two
+characteristics. This Ring 4 has five, plus a service nobody has documented at all:
+
+```
+98ed0003  read/notify                              the known reply channel — and it reads
+98ed0002  write/write-nr                           the known request channel
+98ed0004  read/write/write-nr/notify/indicate      undocumented, and fully capable
+98ed0005  write-nr/notify                          undocumented
+98ed0006  write-nr/notify                          undocumented
+00060001  write/write-nr/notify                    a second service entirely
+```
+
+Any one of those could be the way in on a link that cannot be encrypted, and none of them can be
+guessed at from outside. So the probe now walks every readable characteristic on the ring and reports
+what came back, byte for byte, in the diagnosis. `98ed0004` is the interesting one: read, write and
+notify in a single characteristic is what a request/response channel looks like when it does not want
+a subscription.
+
+**This is the first Ring 4 GATT table any of this has been written against**, and it is worth saying
+that the protocol notes' authors did not have it. Whatever comes back from those reads is new
+information.
+
 ## BrightOura v0.11 — three more ways at it
 
 Reads came back empty: the ring pushes its replies and will not hand them over when asked. So this

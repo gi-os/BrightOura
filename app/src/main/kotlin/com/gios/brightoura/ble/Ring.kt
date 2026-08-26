@@ -50,6 +50,10 @@ class Ring private constructor(
     private val write: BluetoothGattCharacteristic,
     private val notify: BluetoothGattCharacteristic,
     private val frames: Channel<ByteArray>,
+    /** Write completions, so the next operation waits its turn. See [ask]. */
+    private val writes: Channel<Int>,
+    /** Read completions: the status, and whatever came back with it. */
+    private val reads: Channel<Pair<Int, ByteArray>>,
     /**
      * Whether the notify subscription actually took.
      *
@@ -70,7 +74,18 @@ class Ring private constructor(
      * matters: it needs no encrypted link.
      */
     suspend fun ask(request: ByteArray, timeoutMs: Long = REPLY_MS): Protocol.Packet? {
+        // **One GATT operation at a time.** Android will not queue them: a read issued while a
+        // write is still in flight is refused outright — `readCharacteristic` returns false and
+        // nothing ever arrives. The first polling version did exactly that, wrote a request and
+        // immediately asked for the answer, and got a silent refusal every time. So the write is
+        // awaited before anything else is asked of the link.
         send(request)
+        val status = withTimeoutOrNull(WRITE_MS) { writes.receive() }
+        if (status == null) {
+            Trace.add("the write was never acknowledged")
+        } else if (status != BluetoothGatt.GATT_SUCCESS) {
+            Trace.add("write ${describe(status)}")
+        }
         if (subscribed) return next(timeoutMs)
         return poll(timeoutMs)
     }
@@ -86,9 +101,36 @@ class Ring private constructor(
     @SuppressLint("MissingPermission")
     private suspend fun poll(timeoutMs: Long): Protocol.Packet? {
         val deadline = System.currentTimeMillis() + timeoutMs
+        var refusals = 0
         while (System.currentTimeMillis() < deadline) {
-            if (!gatt.readCharacteristic(notify)) return null
+            // A pushed frame beats a read: the local half of the subscription may be delivering
+            // even though the descriptor was never written. See [connect].
             next(POLL_STEP_MS)?.let { return it }
+            if (!gatt.readCharacteristic(notify)) {
+                refusals++
+                if (refusals == 1) Trace.add("the phone refused to start a read")
+                kotlinx.coroutines.delay(POLL_STEP_MS)
+                continue
+            }
+            val answer = withTimeoutOrNull(READ_MS) { reads.receive() }
+            if (answer == null) {
+                Trace.add("a read went unanswered")
+                continue
+            }
+            val (status, value) = answer
+            if (status != BluetoothGatt.GATT_SUCCESS) {
+                // **The status is the whole diagnosis.** 5 or 15 means the characteristic is
+                // readable but only over an encrypted link, which would settle this question for
+                // good; anything else means something quite different.
+                Trace.add("read ${describe(status)}")
+                if (isEncryptionStatus(status)) return null
+                kotlinx.coroutines.delay(POLL_STEP_MS)
+                continue
+            }
+            if (value.isNotEmpty()) {
+                Trace.add("read ${value.size} bytes")
+                return Protocol.parse(value)
+            }
         }
         return null
     }
@@ -123,6 +165,43 @@ class Ring private constructor(
         append(" · notify ")
         append(properties(notify))
         append(if (subscribed) " · subscribed" else " · NOT subscribed")
+    }
+
+    /**
+     * The other channels this ring turns out to have.
+     *
+     * The protocol notes describe two characteristics. This ring has **five**, plus a service
+     * nobody has written about at all — `98ed0004` reads, writes and notifies; `98ed0005` and
+     * `98ed0006` write and notify; and `00060001` in a second service does both. Any of them could
+     * be the way in on a link that cannot be encrypted, and none of them can be guessed at from
+     * outside. [Session] walks them.
+     */
+    @SuppressLint("MissingPermission")
+    fun alternates(): List<BluetoothGattCharacteristic> = buildList {
+        gatt.services.forEach { service ->
+            service.characteristics.forEach { characteristic ->
+                val readable = characteristic.properties and
+                    BluetoothGattCharacteristic.PROPERTY_READ != 0
+                val writable = characteristic.properties and
+                    (
+                        BluetoothGattCharacteristic.PROPERTY_WRITE or
+                            BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE
+                        ) != 0
+                if (characteristic.uuid == Protocol.NOTIFY) return@forEach
+                if (characteristic.uuid == Protocol.WRITE) return@forEach
+                if (readable || writable) add(characteristic)
+            }
+        }
+    }
+
+    /** Read one characteristic directly, for the walk through the undocumented ones. */
+    @SuppressLint("MissingPermission")
+    suspend fun readDirect(characteristic: BluetoothGattCharacteristic): ByteArray? {
+        if (!gatt.readCharacteristic(characteristic)) return null
+        val answer = withTimeoutOrNull(READ_MS) { reads.receive() } ?: return null
+        val (status, value) = answer
+        Trace.add("read ${characteristic.uuid.toString().take(8)}: ${describe(status)} ${value.size}B")
+        return value.takeIf { status == BluetoothGatt.GATT_SUCCESS && it.isNotEmpty() }
     }
 
     private fun properties(characteristic: BluetoothGattCharacteristic): String {
@@ -351,6 +430,8 @@ class Ring private constructor(
             // dialog on screen went past. See [Pairing].
             val watcher = Pairing.watch(context, onProgress)
             val frames = Channel<ByteArray>(Channel.BUFFERED)
+            val writes = Channel<Int>(Channel.CONFLATED)
+            val reads = Channel<Pair<Int, ByteArray>>(Channel.BUFFERED)
             val ready = Channel<Boolean>(Channel.CONFLATED)
             val opened = AtomicBoolean(false)
             /** Set when a GATT status says the link is not encrypted enough. See below. */
@@ -484,7 +565,7 @@ class Ring private constructor(
                 ) {
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) return
                     if (isEncryptionStatus(status)) needsBond.set(true)
-                    characteristic.value?.takeIf { it.isNotEmpty() }?.let { frames.trySend(it.copyOf()) }
+                    reads.trySend(status to (characteristic.value ?: ByteArray(0)))
                 }
 
                 // A read answers here, and it is fed into the same channel a notification would
@@ -496,7 +577,16 @@ class Ring private constructor(
                     status: Int,
                 ) {
                     if (isEncryptionStatus(status)) needsBond.set(true)
-                    if (value.isNotEmpty()) frames.trySend(value.copyOf())
+                    reads.trySend(status to value.copyOf())
+                }
+
+                override fun onCharacteristicWrite(
+                    g: BluetoothGatt,
+                    characteristic: BluetoothGattCharacteristic,
+                    status: Int,
+                ) {
+                    if (isEncryptionStatus(status)) needsBond.set(true)
+                    writes.trySend(status)
                 }
             }
 
@@ -540,7 +630,7 @@ class Ring private constructor(
                 runCatching { g.close() }
                 return null
             }
-            val ring = Ring(g, writeChar, notifyChar, frames, subscribed.get())
+            val ring = Ring(g, writeChar, notifyChar, frames, writes, reads, subscribed.get())
             onProgress(ring.capabilitiesLine())
             Trace.add(ring.capabilitiesLine())
             return ring
@@ -691,7 +781,13 @@ class Ring private constructor(
         private const val BOND_MS = 60_000L
 
         /** How long one poll of the notify characteristic waits before asking again. */
-        private const val POLL_STEP_MS = 400L
+        private const val POLL_STEP_MS = 250L
+
+        /** How long a write is given to be acknowledged before the next operation goes ahead. */
+        private const val WRITE_MS = 2_000L
+
+        /** How long a single read is given to come back. */
+        private const val READ_MS = 2_000L
     }
 
     /** A ring the scan saw. */

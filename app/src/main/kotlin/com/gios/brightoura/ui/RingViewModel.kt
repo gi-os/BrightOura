@@ -307,6 +307,11 @@ class RingViewModel(app: Application) : AndroidViewModel(app) {
             appendLine("bonded devices:")
             Ring.bondedNames(app).forEach { appendLine("  $it") }
             appendLine()
+            _probe.value?.others?.takeIf { it.isNotEmpty() }?.let { lines ->
+                appendLine("channels that answered a read:")
+                lines.forEach { appendLine("  $it") }
+                appendLine()
+            }
             _probe.value?.gatt?.takeIf { it.isNotBlank() }?.let {
                 appendLine("gatt table:")
                 appendLine(it.trimEnd())

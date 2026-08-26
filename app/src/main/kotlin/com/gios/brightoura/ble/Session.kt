@@ -52,9 +52,17 @@ class Session(private val context: Context, private val vault: Vault) {
             // Battery is the tell for whether a key is already installed: it is auth-gated, so a
             // ring that answers `needs auth` has been keyed by something — Oura's app, or us.
             val battery = ring.ask(Protocol.battery())
+            step("Trying the channels nobody documented")
+            val others = ring.alternates().mapNotNull { characteristic ->
+                val bytes = ring.readDirect(characteristic)
+                bytes?.let {
+                    "${characteristic.uuid} → ${it.joinToString("") { b -> "%02x".format(b) }}"
+                }
+            }
             Probe(
                 link = ring.capabilitiesLine(),
                 gatt = ring.gattDump(),
+                others = others,
                 firmware = firmware?.let { text(it.payload) },
                 serial = serial?.let { text(it.payload) },
                 hardware = hardware?.let { text(it.payload) },
@@ -218,6 +226,14 @@ class Session(private val context: Context, private val vault: Vault) {
          * lines of UUIDs, which is data for whoever is solving this and noise for anybody else.
          */
         val gatt: String,
+        /**
+         * What the undocumented characteristics answered, if anything.
+         *
+         * This ring has five characteristics in the Oura service and a second service besides; the
+         * notes describe two. On a link that cannot be encrypted, one of the others answering a
+         * plain read would be the whole way in — and there is no way to know but to ask each one.
+         */
+        val others: List<String>,
         val firmware: String?,
         val serial: String?,
         val hardware: String?,
