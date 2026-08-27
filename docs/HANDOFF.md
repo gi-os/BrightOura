@@ -2,7 +2,7 @@
 
 Written 2026-08-27, at v0.30.40. BrightOura is parked, not abandoned. This is the whole
 record — what the ring does, what this app does, the wall it is standing at, and what a
-person picking it up would actually have to do. It is written for somebody who has never
+person picking it up would have to do. It is written for somebody who has never
 seen the repo and does not have the ring.
 
 Nothing here is aspiration. Where something is unverified it says so, because the
