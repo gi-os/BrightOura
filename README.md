@@ -81,6 +81,15 @@ ring: they are computed by Oura's own engine from these same signals. This app c
 numbers from the same inputs, and when it does they will be labelled as its own rather than dressed
 up as Oura's.
 
+## Where this stands
+
+Parked at v0.30. The protocol is implemented and the decoders are tested, and the ring is
+still not readable, because LightOS cannot complete the Bluetooth bond the ring requires —
+the pairing screen behind the request crashes, and nine routes around it end at the same
+place. [docs/HANDOFF.md](docs/HANDOFF.md) is the whole record: what works, every route
+tried and why it failed, the two transcripts that got furthest, and what somebody picking
+this up should do first.
+
 ## Privacy
 
 Bluetooth, and one network permission for shake-to-report. The ring's data is written to this app's
