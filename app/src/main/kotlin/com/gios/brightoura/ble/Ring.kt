@@ -204,6 +204,82 @@ class Ring private constructor(
         return value.takeIf { status == BluetoothGatt.GATT_SUCCESS && it.isNotEmpty() }
     }
 
+    /**
+     * Write a real request to an undocumented characteristic and read the answer back from the
+     * *same* one — the probe's one untried idea, and the only one that could make the bond
+     * irrelevant. `98ed0004` reads and writes and notifies, which is what a request/response
+     * register looks like when it needs no subscription; [readDirect] only ever saw a cached
+     * value, never a reply to a question. Returns null for a characteristic that cannot be
+     * written, so the caller can walk every alternate blindly.
+     *
+     *  - An encryption status on the *write* is itself an answer: this channel is locked too.
+     *  - A read-back equal to what we wrote is an echo, not a reply — the register stored our
+     *    bytes and did nothing with them.
+     *  - A parseable frame, and especially the ring's own "authenticate first", means the ring's
+     *    protocol engine answered over an unencrypted link. That is the whole game.
+     */
+    @SuppressLint("MissingPermission")
+    suspend fun interrogate(
+        characteristic: BluetoothGattCharacteristic,
+        label: String,
+        request: ByteArray,
+    ): String? {
+        val writable = characteristic.properties and
+            (
+                BluetoothGattCharacteristic.PROPERTY_WRITE or
+                    BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE
+                ) != 0
+        if (!writable) return null
+        val uuid = characteristic.uuid.toString().take(8)
+
+        // Write with response so the ring acknowledges and we learn the write status.
+        val started = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            gatt.writeCharacteristic(
+                characteristic,
+                request,
+                BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT,
+            ) == android.bluetooth.BluetoothStatusCodes.SUCCESS
+        } else {
+            @Suppress("DEPRECATION")
+            run {
+                characteristic.value = request
+                characteristic.writeType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
+                gatt.writeCharacteristic(characteristic)
+            }
+        }
+        if (!started) return "$uuid <- $label: the phone refused the write"
+
+        val writeStatus = withTimeoutOrNull(WRITE_MS) { writes.receive() }
+            ?: return "$uuid <- $label: write never acknowledged"
+        if (writeStatus != BluetoothGatt.GATT_SUCCESS) {
+            return "$uuid <- $label: write ${describe(writeStatus)}"
+        }
+
+        // One GATT operation at a time — the write is acked, now read the same characteristic back.
+        if (!gatt.readCharacteristic(characteristic)) {
+            return "$uuid <- $label: wrote ok, phone refused the read-back"
+        }
+        val answer = withTimeoutOrNull(READ_MS) { reads.receive() }
+            ?: return "$uuid <- $label: wrote ok, read-back unanswered"
+        val (readStatus, value) = answer
+        if (readStatus != BluetoothGatt.GATT_SUCCESS) {
+            return "$uuid <- $label: wrote ok, read ${describe(readStatus)}"
+        }
+
+        val hex = value.joinToString("") { "%02x".format(it) }
+        val note = when {
+            value.isEmpty() -> "empty"
+            value.contentEquals(request) -> "echoed our bytes (no reply)"
+            Protocol.parse(value)?.let { Protocol.needsAuth(it) } == true ->
+                "RING ANSWERED: authenticate-first over a plain link"
+            Protocol.parse(value) != null ->
+                "RING ANSWERED: reply tag=0x%02x".format(Protocol.parse(value)!!.tag)
+            else -> "unparseable"
+        }
+        Trace.add("interrogate $uuid $label -> $note")
+        return "$uuid <- $label: $hex [$note]"
+    }
+
     private fun properties(characteristic: BluetoothGattCharacteristic): String {
         val flags = characteristic.properties
         val names = buildList {

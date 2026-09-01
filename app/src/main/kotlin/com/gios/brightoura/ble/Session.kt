@@ -53,10 +53,19 @@ class Session(private val context: Context, private val vault: Vault) {
             // ring that answers `needs auth` has been keyed by something — Oura's app, or us.
             val battery = ring.ask(Protocol.battery())
             step("Trying the channels nobody documented")
-            val others = ring.alternates().mapNotNull { characteristic ->
-                val bytes = ring.readDirect(characteristic)
-                bytes?.let {
-                    "${characteristic.uuid} → ${it.joinToString("") { b -> "%02x".format(b) }}"
+            // Two passes over the undocumented characteristics. The read pass sees whatever value
+            // is sitting in each one; the write pass is the untried idea — write a real cold
+            // request (firmware answers without auth) and a nonce request, then read the answer
+            // back from the same characteristic. If `98ed0004` is a request/response register, the
+            // ring answers here on a link that was never bonded, and the whole wall stops mattering.
+            val others = buildList {
+                ring.alternates().forEach { characteristic ->
+                    val bytes = ring.readDirect(characteristic)
+                    if (bytes != null) {
+                        add("${characteristic.uuid} → ${bytes.joinToString("") { b -> "%02x".format(b) }}")
+                    }
+                    ring.interrogate(characteristic, "firmware", Protocol.firmware())?.let { add(it) }
+                    ring.interrogate(characteristic, "get-nonce", Protocol.authNonce())?.let { add(it) }
                 }
             }
             Probe(
