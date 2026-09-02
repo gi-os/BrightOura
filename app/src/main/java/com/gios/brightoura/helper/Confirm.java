@@ -72,10 +72,16 @@ public final class Confirm {
     private static final long BONDING_GRACE_MS = 45_000L;
 
     /** Between attempts. The request can arrive several seconds after the bond is asked for. */
+    // Captured across the run so the final SUMMARY can restate them — the copy keeps only the
+    // tail, so everything decisive has to be printed last.
+    private static boolean sBondStarted = false;
+    private static boolean sConfirmed = false;
+    private static final StringBuilder sStates = new StringBuilder();
+
     private static final long POLL_MS = 500L;
 
     /** How often to say something when nothing has changed, so a live transcript keeps moving. */
-    private static final long HEARTBEAT_MS = 3_000L;
+    private static final long HEARTBEAT_MS = 10_000L;
 
     /**
      * How long to wait for the Bluetooth service to be handed over.
@@ -276,6 +282,7 @@ public final class Confirm {
             System.out.println("createBond(TRANSPORT_LE) unavailable (" + t.getClass().getSimpleName()
                     + "), used default transport: " + asked);
         }
+        sBondStarted = asked;
 
         long deadline = System.currentTimeMillis() + budget;
         boolean extended = false;
@@ -286,6 +293,7 @@ public final class Confirm {
             int state = device.getBondState();
             if (state != last) {
                 System.out.println("state " + name(state));
+                sStates.append(name(state)).append(' ');
                 last = state;
                 spoke = System.currentTimeMillis();
             }
@@ -313,12 +321,13 @@ public final class Confirm {
                 boolean ok = device.setPairingConfirmation(true);
                 if (ok) {
                     confirmed = true;
+                    sConfirmed = true;
                     System.out.println("setPairingConfirmation true");
                 }
             }
             if (state == BluetoothDevice.BOND_NONE && confirmed) {
                 System.out.println("RESULT refused after confirming");
-                dumpBluetoothLog(mac);
+                finishAndSummarize(mac, "NONE");
                 System.out.flush();
                 System.exit(0);
                 return;
@@ -341,7 +350,7 @@ public final class Confirm {
         System.out.println("RESULT gave up in state " + name(finalState)
                 + (confirmed ? " (request was answered)" : " (no request ever arrived)"));
         if (finalState != BluetoothDevice.BOND_BONDED) {
-            dumpBluetoothLog(mac);
+            finishAndSummarize(mac, name(finalState));
             System.out.flush();
             System.exit(0);
         }
@@ -563,56 +572,104 @@ public final class Confirm {
      * timeout, a rejected key, a link supervision loss — with more detail than the coarse
      * EXTRA_REASON enum ever had. This is the line nobody has captured.
      */
-    private static void dumpBluetoothLog(String mac) {
-        System.out.println("--- why it collapsed (bluetooth log) ---");
+    /**
+     * The last thing printed, because the copy buffer keeps only the tail: a tight extract of the
+     * stack's decisive log lines, then a SUMMARY that restates every fact needed to read the run —
+     * transport, whether the bond started, whether the confirmation went through, the state path,
+     * and the collapse reason in words. No heartbeat noise, no service-policy chatter.
+     */
+    private static void finishAndSummarize(String mac, String finalStateName) {
         String macTail = mac == null ? "" : mac.toLowerCase();
+        String lastBondCb = "";
+        String lastDisc = "";
+        String smpLine = "";
         try {
             Process proc = Runtime.getRuntime().exec(
-                    new String[]{"logcat", "-d", "-b", "all", "-v", "time", "-t", "2000"});
+                    new String[]{"logcat", "-d", "-b", "all", "-v", "time", "-t", "3000"});
             java.io.BufferedReader r = new java.io.BufferedReader(
                     new java.io.InputStreamReader(proc.getInputStream()));
             java.util.ArrayList<String> hits = new java.util.ArrayList<String>();
             String line;
             while ((line = r.readLine()) != null) {
                 String l = line.toLowerCase();
-                if (l.contains("smp") || l.contains("bond") || l.contains("pair")
-                        || l.contains("btm_sec") || l.contains("l2c") || l.contains("security")
-                        || l.contains("le_") || l.contains("gatt_") || l.contains("auth")
-                        || (!macTail.isEmpty() && l.contains(macTail))) {
-                    hits.add(line);
-                }
+                boolean noise = l.contains("setconnectionpolicy") || l.contains("getcustommeta")
+                        || l.contains("connectionpolicy") || l.contains("hidhost")
+                        || l.contains("a2dp") || l.contains("headset") || l.contains("hearingaid")
+                        || l.contains("pbap") || l.contains("mapservice") || l.contains("fastpair")
+                        || l.contains("lightoseventmanager") || l.contains("updatesdpprogress")
+                        || l.contains("battery level");
+                if (noise) continue;
+                boolean keep = l.contains("bondstatechangecallback")
+                        || l.contains("smp") || l.contains("pairing_fail")
+                        || l.contains("btm_sec") || l.contains("aclstatechange")
+                        || (l.contains("disconnected") && !macTail.isEmpty() && l.contains(macTail))
+                        || (l.contains("bond state change intent") && !macTail.isEmpty() && l.contains(macTail));
+                if (!keep) continue;
+                hits.add(line);
+                if (l.contains("bondstatechangecallback")) lastBondCb = line;
+                if (l.contains("disconnected") && !macTail.isEmpty() && l.contains(macTail)) lastDisc = line;
+                if (l.contains("smp") || l.contains("pairing_fail")) smpLine = line;
             }
             r.close();
-            int from = Math.max(0, hits.size() - 50);
+            System.out.println("--- bluetooth log (trimmed) ---");
+            int from = Math.max(0, hits.size() - 12);
             for (int i = from; i < hits.size(); i++) System.out.println("log> " + hits.get(i));
-            if (hits.isEmpty()) {
-                System.out.println("log> (no bluetooth lines — production logging may be off)");
-            }
+            if (hits.isEmpty()) System.out.println("log> (production logging is quiet)");
         } catch (Throwable t) {
-            System.out.println("log> could not read logcat: " + t.getClass().getSimpleName()
-                    + " " + t.getMessage());
+            System.out.println("log> could not read logcat: " + t.getClass().getSimpleName());
         }
-        // Fallback / complement: the manager's own dump often names the last bond failure even when
-        // the live log is quiet in a production build.
-        System.out.println("--- dumpsys bluetooth_manager (bond/pairing lines) ---");
-        try {
-            Process proc = Runtime.getRuntime().exec(new String[]{"dumpsys", "bluetooth_manager"});
-            java.io.BufferedReader r = new java.io.BufferedReader(
-                    new java.io.InputStreamReader(proc.getInputStream()));
-            String line;
-            while ((line = r.readLine()) != null) {
-                String l = line.toLowerCase();
-                if (l.contains("bond") || l.contains("pair") || l.contains("smp")
-                        || l.contains("reason") || l.contains("fail")
-                        || (!macTail.isEmpty() && l.contains(macTail))) {
-                    System.out.println("dump> " + line.trim());
-                }
-            }
-            r.close();
-        } catch (Throwable t) {
-            System.out.println("dump> could not read dumpsys: " + t.getClass().getSimpleName());
-        }
+
+        int discReason = extractReason(lastDisc, "reason=");
+        int cbReason = extractReason(lastBondCb, "hcireason:");
+
+        System.out.println("=== SUMMARY (read this) ===");
+        System.out.println("transport:            LE (createBond TRANSPORT_LE)");
+        System.out.println("createBond started:   " + sBondStarted);
+        System.out.println("setPairingConfirm:    " + sConfirmed
+                + (sConfirmed ? "  (the phone answered the consent)"
+                             : "  (the phone never got to answer — request never matched)"));
+        System.out.println("state path:           "
+                + (sStates.length() == 0 ? "(none)" : sStates.toString().trim()));
+        System.out.println("final state:          " + finalStateName);
+        if (cbReason >= 0) System.out.println("bond callback reason: " + cbReason + " (" + hciWords(cbReason) + ")");
+        if (discReason >= 0) System.out.println("link dropped reason:  " + discReason + " (" + hciWords(discReason) + ")");
+        if (!smpLine.isEmpty()) System.out.println("smp line:             " + smpLine.trim());
+        System.out.println("verdict:              " + verdict(sConfirmed, cbReason, discReason));
         System.out.flush();
+    }
+
+    private static int extractReason(String line, String key) {
+        if (line == null) return -1;
+        String l = line.toLowerCase();
+        int i = l.indexOf(key);
+        if (i < 0) return -1;
+        i += key.length();
+        StringBuilder num = new StringBuilder();
+        while (i < l.length() && (l.charAt(i) == ' ')) i++;
+        while (i < l.length() && Character.isDigit(l.charAt(i))) { num.append(l.charAt(i)); i++; }
+        try { return num.length() == 0 ? -1 : Integer.parseInt(num.toString()); }
+        catch (Throwable t) { return -1; }
+    }
+
+    private static String hciWords(int r) {
+        switch (r) {
+            case 8:  return "supervision timeout — the link went quiet, SMP stalled";
+            case 5:  return "authentication failure";
+            case 6:  return "PIN or key missing";
+            case 19: return "remote (the ring) terminated the link";
+            case 22: return "local host (the phone) terminated the link";
+            case 62: return "connection failed to establish";
+            default: return "see the Bluetooth spec";
+        }
+    }
+
+    private static String verdict(boolean confirmed, int cbReason, int discReason) {
+        if (!confirmed) return "the consent was never answered — the pairing variant did not match setPairingConfirmation";
+        if (discReason == 8 || cbReason == 8)
+            return "confirmed, but SMP stalled and the link timed out — the ring is not completing the handshake this way";
+        if (discReason == 19 || cbReason == 19)
+            return "confirmed, but the ring rejected/terminated the pairing";
+        return "confirmed, and the bond still collapsed — see the reason above";
     }
 
     private static void watchBondState(Context context, final String mac) {
