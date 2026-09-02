@@ -204,6 +204,18 @@ class Ring private constructor(
         return value.takeIf { status == BluetoothGatt.GATT_SUCCESS && it.isNotEmpty() }
     }
 
+    /** Read a characteristic and describe the GATT status in words — used to name WHY a channel
+     *  will not answer (a 137/5/15 here is "needs an encrypted link" for that exact channel). */
+    @SuppressLint("MissingPermission")
+    suspend fun readStatus(characteristic: BluetoothGattCharacteristic): String {
+        if (characteristic.properties and BluetoothGattCharacteristic.PROPERTY_READ == 0) return "not readable"
+        if (!gatt.readCharacteristic(characteristic)) return "the phone refused the read"
+        val answer = withTimeoutOrNull(READ_MS) { reads.receive() } ?: return "read unanswered"
+        val (status, value) = answer
+        val hex = value.joinToString("") { "%02x".format(it) }
+        return describe(status) + if (status == BluetoothGatt.GATT_SUCCESS) " · ${value.size}B $hex" else ""
+    }
+
     /**
      * Write a real request to an undocumented characteristic and read the answer back from the
      * *same* one — the probe's one untried idea, and the only one that could make the bond
@@ -232,22 +244,34 @@ class Ring private constructor(
         if (!writable) return null
         val uuid = characteristic.uuid.toString().take(8)
 
-        // Write with response so the ring acknowledges and we learn the write status.
-        val started = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            gatt.writeCharacteristic(
-                characteristic,
-                request,
-                BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT,
-            ) == android.bluetooth.BluetoothStatusCodes.SUCCESS
+        // Use the write type the characteristic actually supports: WRITE_TYPE_DEFAULT (with
+        // response) needs PROPERTY_WRITE; a write-no-response-only characteristic (98ed0005/0006)
+        // must be written WRITE_TYPE_NO_RESPONSE or the stack refuses it for the wrong reason.
+        val writeType = if (characteristic.properties and BluetoothGattCharacteristic.PROPERTY_WRITE != 0) {
+            BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
+        } else {
+            BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
+        }
+        val startCode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            gatt.writeCharacteristic(characteristic, request, writeType)
         } else {
             @Suppress("DEPRECATION")
             run {
                 characteristic.value = request
-                characteristic.writeType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
-                gatt.writeCharacteristic(characteristic)
+                characteristic.writeType = writeType
+                if (gatt.writeCharacteristic(characteristic)) 0 else -1
             }
         }
-        if (!started) return "$uuid <- $label: the phone refused the write"
+        if (startCode != 0) {
+            // The stack would not even start the write. Read the characteristic back so its GATT
+            // status names WHY — a 137/5/15 there is the encryption verdict for this channel.
+            val why = if (characteristic.properties and BluetoothGattCharacteristic.PROPERTY_READ != 0) {
+                readStatus(characteristic)
+            } else {
+                "not readable"
+            }
+            return "$uuid <- $label: write refused (code $startCode); read says: $why"
+        }
 
         val writeStatus = withTimeoutOrNull(WRITE_MS) { writes.receive() }
             ?: return "$uuid <- $label: write never acknowledged"
@@ -914,6 +938,7 @@ class Ring private constructor(
             8 -> "The ring dropped the link (timeout, status 8)"
             19 -> "The ring closed the link (status 19)"
             22 -> "The phone closed the link (status 22)"
+            5, 15, 137 -> "Needs an encrypted link — insufficient authentication (status $status)"
             133 -> "No answer from the ring (status 133) — asleep, out of range, or busy with " +
                 "another phone"
             147 -> "The connection could not be set up (status 147)"

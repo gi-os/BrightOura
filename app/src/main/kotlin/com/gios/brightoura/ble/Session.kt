@@ -55,12 +55,10 @@ class Session(private val context: Context, private val vault: Vault) {
             step("Trying 98ed0004 first — before anything can trigger the bond")
             val others = buildList {
                 ring.alternates().forEach { characteristic ->
+                    val uuid8 = characteristic.uuid.toString().take(8)
+                    add("$uuid8 read: ${ring.readStatus(characteristic)}")
                     ring.interrogate(characteristic, "firmware", Protocol.firmware())?.let { add(it) }
                     ring.interrogate(characteristic, "get-nonce", Protocol.authNonce())?.let { add(it) }
-                    val bytes = ring.readDirect(characteristic)
-                    if (bytes != null) {
-                        add("${characteristic.uuid} → ${bytes.joinToString("") { b -> "%02x".format(b) }}")
-                    }
                 }
             }
             step("Reading what it will say on the documented channel")
