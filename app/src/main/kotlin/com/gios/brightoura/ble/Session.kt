@@ -44,30 +44,32 @@ class Session(private val context: Context, private val vault: Vault) {
                 ?: return null
             Ring.connect(context, again.address, step, subscribe = false)
         } ?: return null
-        step("Reading what it will say")
         return try {
+            // The undocumented channels go FIRST, before the documented write characteristic is
+            // ever touched. Field trace (2026-09-01): the first write to 98ed0002 was never
+            // acknowledged and every later operation was refused, because a write to an
+            // encryption-gated characteristic makes Android bond in the background, that bond
+            // stalls forever on LightOS, and the wedged write holds the one-op-at-a-time GATT
+            // queue. So the one channel that might not need encryption has to be tried as the very
+            // first operation on a fresh link — a wedged 98ed0002 must not get to poison it.
+            step("Trying 98ed0004 first — before anything can trigger the bond")
+            val others = buildList {
+                ring.alternates().forEach { characteristic ->
+                    ring.interrogate(characteristic, "firmware", Protocol.firmware())?.let { add(it) }
+                    ring.interrogate(characteristic, "get-nonce", Protocol.authNonce())?.let { add(it) }
+                    val bytes = ring.readDirect(characteristic)
+                    if (bytes != null) {
+                        add("${characteristic.uuid} → ${bytes.joinToString("") { b -> "%02x".format(b) }}")
+                    }
+                }
+            }
+            step("Reading what it will say on the documented channel")
             val firmware = ring.ask(Protocol.firmware())
             val serial = ring.ask(Protocol.serial())
             val hardware = ring.ask(Protocol.hardware())
             // Battery is the tell for whether a key is already installed: it is auth-gated, so a
             // ring that answers `needs auth` has been keyed by something — Oura's app, or us.
             val battery = ring.ask(Protocol.battery())
-            step("Trying the channels nobody documented")
-            // Two passes over the undocumented characteristics. The read pass sees whatever value
-            // is sitting in each one; the write pass is the untried idea — write a real cold
-            // request (firmware answers without auth) and a nonce request, then read the answer
-            // back from the same characteristic. If `98ed0004` is a request/response register, the
-            // ring answers here on a link that was never bonded, and the whole wall stops mattering.
-            val others = buildList {
-                ring.alternates().forEach { characteristic ->
-                    val bytes = ring.readDirect(characteristic)
-                    if (bytes != null) {
-                        add("${characteristic.uuid} → ${bytes.joinToString("") { b -> "%02x".format(b) }}")
-                    }
-                    ring.interrogate(characteristic, "firmware", Protocol.firmware())?.let { add(it) }
-                    ring.interrogate(characteristic, "get-nonce", Protocol.authNonce())?.let { add(it) }
-                }
-            }
             Probe(
                 link = ring.capabilitiesLine(),
                 gatt = ring.gattDump(),
