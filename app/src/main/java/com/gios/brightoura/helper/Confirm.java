@@ -303,6 +303,9 @@ public final class Confirm {
             }
             if (state == BluetoothDevice.BOND_NONE && confirmed) {
                 System.out.println("RESULT refused after confirming");
+                dumpBluetoothLog(mac);
+                System.out.flush();
+                System.exit(0);
                 return;
             }
             // **Bonding earns extra time, once.** Reaching the deadline mid-bond is the one case
@@ -322,6 +325,11 @@ public final class Confirm {
         int finalState = device.getBondState();
         System.out.println("RESULT gave up in state " + name(finalState)
                 + (confirmed ? " (request was answered)" : " (no request ever arrived)"));
+        if (finalState != BluetoothDevice.BOND_BONDED) {
+            dumpBluetoothLog(mac);
+            System.out.flush();
+            System.exit(0);
+        }
         if (finalState == BluetoothDevice.BOND_BONDING) {
             // Said plainly because it changes what to do next: the bond is not this process's to
             // finish, and it may well complete after this exits. Nothing here cancels it.
@@ -530,6 +538,68 @@ public final class Confirm {
      * state read back afterwards is a bare NONE, which is what made "refused after confirming" the
      * end of the story rather than the beginning of one.
      */
+    /**
+     * The Bluetooth stack's own account of why the bond collapsed.
+     *
+     * The bond-state broadcast carries EXTRA_REASON, but a bare app_process never pumps a looper,
+     * so a registered receiver never fires and that reason never arrives (which is why every
+     * transcript ended at "refused after confirming" with no cause). The shell uid holds READ_LOGS,
+     * so read the stack's log directly instead: the SMP layer prints the real failure — a pairing
+     * timeout, a rejected key, a link supervision loss — with more detail than the coarse
+     * EXTRA_REASON enum ever had. This is the line nobody has captured.
+     */
+    private static void dumpBluetoothLog(String mac) {
+        System.out.println("--- why it collapsed (bluetooth log) ---");
+        String macTail = mac == null ? "" : mac.toLowerCase();
+        try {
+            Process proc = Runtime.getRuntime().exec(
+                    new String[]{"logcat", "-d", "-b", "all", "-v", "time", "-t", "2000"});
+            java.io.BufferedReader r = new java.io.BufferedReader(
+                    new java.io.InputStreamReader(proc.getInputStream()));
+            java.util.ArrayList<String> hits = new java.util.ArrayList<String>();
+            String line;
+            while ((line = r.readLine()) != null) {
+                String l = line.toLowerCase();
+                if (l.contains("smp") || l.contains("bond") || l.contains("pair")
+                        || l.contains("btm_sec") || l.contains("l2c") || l.contains("security")
+                        || l.contains("le_") || l.contains("gatt_") || l.contains("auth")
+                        || (!macTail.isEmpty() && l.contains(macTail))) {
+                    hits.add(line);
+                }
+            }
+            r.close();
+            int from = Math.max(0, hits.size() - 50);
+            for (int i = from; i < hits.size(); i++) System.out.println("log> " + hits.get(i));
+            if (hits.isEmpty()) {
+                System.out.println("log> (no bluetooth lines — production logging may be off)");
+            }
+        } catch (Throwable t) {
+            System.out.println("log> could not read logcat: " + t.getClass().getSimpleName()
+                    + " " + t.getMessage());
+        }
+        // Fallback / complement: the manager's own dump often names the last bond failure even when
+        // the live log is quiet in a production build.
+        System.out.println("--- dumpsys bluetooth_manager (bond/pairing lines) ---");
+        try {
+            Process proc = Runtime.getRuntime().exec(new String[]{"dumpsys", "bluetooth_manager"});
+            java.io.BufferedReader r = new java.io.BufferedReader(
+                    new java.io.InputStreamReader(proc.getInputStream()));
+            String line;
+            while ((line = r.readLine()) != null) {
+                String l = line.toLowerCase();
+                if (l.contains("bond") || l.contains("pair") || l.contains("smp")
+                        || l.contains("reason") || l.contains("fail")
+                        || (!macTail.isEmpty() && l.contains(macTail))) {
+                    System.out.println("dump> " + line.trim());
+                }
+            }
+            r.close();
+        } catch (Throwable t) {
+            System.out.println("dump> could not read dumpsys: " + t.getClass().getSimpleName());
+        }
+        System.out.flush();
+    }
+
     private static void watchBondState(Context context, final String mac) {
         try {
             android.content.BroadcastReceiver receiver = new android.content.BroadcastReceiver() {
