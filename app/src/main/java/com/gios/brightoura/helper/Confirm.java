@@ -259,8 +259,23 @@ public final class Confirm {
         invokeBoolean(device, "removeBond");
         sleep(400);
 
-        boolean asked = device.createBond();
-        System.out.println("createBond " + asked);
+        // **Bond over LE explicitly.** The no-arg createBond() defaults to TRANSPORT_AUTO, which
+        // on this stack tries BR/EDR first against a device that only speaks BLE — the same trap
+        // the GATT connect avoids with TRANSPORT_LE. A bond attempted on the wrong transport is
+        // exactly the ~30s BONDING→NONE with the ring terminating the link (HCI reason 19) that
+        // every attempt has shown. createBond(int transport) is a hidden/system method, so it is
+        // reflected — the same way removeBond and cancelBondProcess already are here. LE = 2.
+        boolean asked;
+        try {
+            java.lang.reflect.Method m = device.getClass().getMethod("createBond", int.class);
+            Object r = m.invoke(device, 2);
+            asked = (r instanceof Boolean) && (Boolean) r;
+            System.out.println("createBond(TRANSPORT_LE) " + asked);
+        } catch (Throwable t) {
+            asked = device.createBond();
+            System.out.println("createBond(TRANSPORT_LE) unavailable (" + t.getClass().getSimpleName()
+                    + "), used default transport: " + asked);
+        }
 
         long deadline = System.currentTimeMillis() + budget;
         boolean extended = false;
