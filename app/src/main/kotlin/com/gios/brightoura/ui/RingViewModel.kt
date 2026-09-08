@@ -630,6 +630,9 @@ class RingViewModel(app: Application) : AndroidViewModel(app) {
         val hadGood = _mac.value?.let { it.error == null } ?: false
         if (snap.error != null && hadGood) {
             say("Couldn't reach the Mac just now — showing the last sync. It updates on home Wi-Fi.")
+            // File it anyway so the error chip and (once a token is set) auto-send capture why a
+            // connection failed, without disturbing the data already on screen.
+            fail("read the ring from the Mac", snap.error)
             return@work
         }
         _mac.value = snap
