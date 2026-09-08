@@ -624,6 +624,14 @@ class RingViewModel(app: Application) : AndroidViewModel(app) {
     fun syncFromMac() = work("read the ring from the Mac") {
         step("Asking ${vault.macUrl}")
         val snap = withContext(Dispatchers.IO) { MacSource.fetch(vault.macUrl) }
+        // The bridge is only reachable on home Wi-Fi. If a refresh fails but we already have data,
+        // keep showing it rather than dropping to an error screen — a failed poll off the network
+        // should not wipe the last good sync.
+        val hadGood = _mac.value?.let { it.error == null } ?: false
+        if (snap.error != null && hadGood) {
+            say("Couldn't reach the Mac just now — showing the last sync. It updates on home Wi-Fi.")
+            return@work
+        }
         _mac.value = snap
         say(
             when {

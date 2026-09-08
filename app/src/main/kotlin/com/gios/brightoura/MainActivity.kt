@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -21,6 +22,9 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.gios.brightoura.ui.FramesScreen
 import com.gios.brightoura.ui.MacScreen
@@ -104,8 +108,16 @@ class MainActivity : ComponentActivity() {
         // is a one-screen app that shows the ring.
         val macSnap by vm.mac.collectAsStateWithLifecycle()
         var tab by remember { mutableIntStateOf(0) }
-        // Read the ring on launch — it behaves like a live link, not a page you refresh.
-        LaunchedEffect(Unit) { vm.syncFromMac() }
+        // Read the ring every time the app comes to the foreground — opening it, or returning to
+        // it, refreshes on its own. syncFromMac no-ops if one is already running.
+        val lifecycleOwner = LocalLifecycleOwner.current
+        DisposableEffect(lifecycleOwner) {
+            val observer = LifecycleEventObserver { _, event ->
+                if (event == Lifecycle.Event.ON_RESUME) vm.syncFromMac()
+            }
+            lifecycleOwner.lifecycle.addObserver(observer)
+            onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+        }
 
         /**
          * Bluetooth's runtime permissions.
