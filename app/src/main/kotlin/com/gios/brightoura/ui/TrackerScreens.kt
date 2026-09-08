@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.PagerDefaults
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -30,6 +31,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -63,6 +65,7 @@ fun TrackerPager(
     onOpenPairing: () -> Unit,
 ) {
     val model = snap.model
+    val busy by vm.busy.collectAsStateWithLifecycle()
     val pages = 7
     val state = rememberPagerState(pageCount = { pages })
     val scope = rememberCoroutineScope()
@@ -74,13 +77,25 @@ fun TrackerPager(
     }
 
     Column(Modifier.fillMaxSize().background(Ink.Bg)) {
-        HorizontalPager(state = state, modifier = Modifier.weight(1f)) { page ->
+        HorizontalPager(
+            state = state,
+            modifier = Modifier.weight(1f),
+            // Smoother left/right: a light flick (28% of the width) commits to the next screen,
+            // the neighbouring pages are kept composed so they slide in without a hitch, and a
+            // hair of spacing keeps one screen from bleeding into the next mid-drag.
+            pageSpacing = 12.dp,
+            beyondViewportPageCount = 1,
+            flingBehavior = PagerDefaults.flingBehavior(
+                state = state,
+                snapPositionalThreshold = 0.28f,
+            ),
+        ) { page ->
             Column(
                 Modifier.fillMaxSize().verticalScroll(rememberScrollState())
                     .padding(horizontal = 20.dp, vertical = 18.dp),
             ) {
                 when (page) {
-                    0 -> TodayPage(model, snap)
+                    0 -> TodayPage(model, snap, busy) { vm.syncFromMac() }
                     1 -> SleepPage(model.today?.sleep)
                     2 -> ReadinessPage(model.today?.readiness)
                     3 -> ActivityPage(model.today?.activity)
@@ -97,12 +112,29 @@ fun TrackerPager(
 // ---- pages -------------------------------------------------------------------------------------
 
 @Composable
-private fun TodayPage(model: Tracker.Model, snap: com.gios.brightoura.data.MacSource.Snapshot) {
+private fun TodayPage(
+    model: Tracker.Model,
+    snap: com.gios.brightoura.data.MacSource.Snapshot,
+    busy: Boolean,
+    onRefresh: () -> Unit,
+) {
     val day = model.today
-    HeaderRow(
-        left = day?.let { DOW.format(Instant.ofEpochMilli(dayMs(it.epochDay))) } ?: "Today",
-        right = snap.serial?.let { "OURA" } ?: "",
-    )
+    Row(
+        Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            day?.let { DOW.format(Instant.ofEpochMilli(dayMs(it.epochDay))) } ?: "Today",
+            style = MaterialTheme.typography.titleLarge, color = Ink.Soft,
+        )
+        Text(
+            if (busy) "UPDATING…" else "↻ REFRESH",
+            style = MaterialTheme.typography.labelLarge,
+            color = if (busy) Ink.Faint else Ink.Soft,
+            modifier = Modifier.clickable(enabled = !busy, onClick = onRefresh),
+        )
+    }
     Spacer(Modifier.height(18.dp))
     if (day == null) {
         Empty(
