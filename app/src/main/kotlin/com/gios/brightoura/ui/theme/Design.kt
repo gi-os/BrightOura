@@ -1,3 +1,5 @@
+@file:OptIn(androidx.compose.ui.text.ExperimentalTextApi::class)
+
 package com.gios.brightoura.ui.theme
 
 import androidx.compose.ui.graphics.Color

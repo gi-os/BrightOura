@@ -630,9 +630,9 @@ class RingViewModel(app: Application) : AndroidViewModel(app) {
                 snap.error != null -> snap.error
                 snap.frameCount == 0 ->
                     "Connected. The Mac has no ring history yet — wear the ring near it and let it sync."
-                snap.days.isEmpty() ->
+                snap.model.days.isEmpty() ->
                     "${snap.frameCount} frames, nothing summarisable yet. More arrives as the ring is worn."
-                else -> "${snap.days.size} day${if (snap.days.size == 1) "" else "s"} from ${snap.frameCount} frames" +
+                else -> "${snap.model.days.size} day${if (snap.model.days.size == 1) "" else "s"} from ${snap.frameCount} frames" +
                     (snap.batteryPercent?.let { " · battery $it%" } ?: "")
             },
         )
