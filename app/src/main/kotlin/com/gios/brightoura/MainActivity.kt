@@ -26,7 +26,6 @@ import com.gios.brightoura.ui.MacScreen
 import com.gios.brightoura.ui.RingViewModel
 import com.gios.brightoura.ui.SetupScreen
 import com.gios.brightoura.ui.TabBar
-import com.gios.brightoura.ui.TodayScreen
 import com.gios.brightoura.ui.theme.BrightOuraTheme
 import com.gios.light.common.hw.LightKey
 import com.gios.light.common.hw.LightKeys
@@ -98,6 +97,11 @@ class MainActivity : ComponentActivity() {
 
     @Composable
     private fun App(vm: RingViewModel) {
+        // The app is the ring's data. Pairing only matters when that data cannot be reached,
+        // so the Bluetooth tabs appear only while the Mac bridge is unreachable — otherwise this
+        // is a one-screen app that shows the ring.
+        val macSnap by vm.mac.collectAsStateWithLifecycle()
+        val disconnected = macSnap?.error != null
         var tab by remember { mutableIntStateOf(0) }
 
         /**
@@ -148,15 +152,16 @@ class MainActivity : ComponentActivity() {
 
         CompositionLocalProvider(LocalWheelBus provides wheel) {
             Column(Modifier.fillMaxSize()) {
+                val labels = if (disconnected) listOf("DATA", "SET UP", "FRAMES") else listOf("DATA")
+                val idx = tab.coerceIn(0, labels.size - 1)
                 Column(Modifier.weight(1f)) {
-                    when (tab) {
-                        0 -> TodayScreen(vm, onSetup = { tab = 1 })
-                        1 -> SetupScreen(vm, onDone = { tab = 0 })
-                        2 -> FramesScreen(vm)
+                    when (labels[idx]) {
+                        "SET UP" -> SetupScreen(vm, onDone = { tab = 0 })
+                        "FRAMES" -> FramesScreen(vm)
                         else -> MacScreen(vm)
                     }
                 }
-                TabBar(tab, listOf("RING", "SETUP", "FRAMES", "DATA")) { tab = it }
+                if (labels.size > 1) TabBar(idx, labels) { tab = it }
             }
         }
     }
