@@ -92,7 +92,7 @@ class MainActivity : ComponentActivity() {
         )
         setContent {
             BrightOuraTheme {
-                Surface(Modifier.fillMaxSize()) {
+                Surface(Modifier.fillMaxSize(), color = com.gios.brightoura.ui.theme.Ink.Bg) {
                     val vm: RingViewModel = viewModel()
                     App(vm)
                     ReportOverlay()

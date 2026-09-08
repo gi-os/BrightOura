@@ -16,8 +16,8 @@ import androidx.compose.ui.unit.sp
 private val MonoDark = darkColorScheme(
     primary = Ink.White, onPrimary = Ink.Bg,
     background = Ink.Bg, onBackground = Ink.Near,
-    surface = Ink.Card, onSurface = Ink.Near,
-    surfaceVariant = Ink.Card2, onSurfaceVariant = Ink.Soft,
+    surface = Ink.Bg, onSurface = Ink.Near,
+    surfaceVariant = Ink.Bg, onSurfaceVariant = Ink.Soft,
     outline = Ink.Rule,
 )
 
