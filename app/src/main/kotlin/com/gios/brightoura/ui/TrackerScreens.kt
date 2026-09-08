@@ -17,9 +17,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.PagerDefaults
 import androidx.compose.foundation.pager.rememberPagerState
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.clickable
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -31,7 +29,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -65,7 +62,6 @@ fun TrackerPager(
     onOpenPairing: () -> Unit,
 ) {
     val model = snap.model
-    val busy by vm.busy.collectAsStateWithLifecycle()
     val pages = 7
     val state = rememberPagerState(pageCount = { pages })
     val scope = rememberCoroutineScope()
@@ -91,11 +87,10 @@ fun TrackerPager(
             ),
         ) { page ->
             Column(
-                Modifier.fillMaxSize().verticalScroll(rememberScrollState())
-                    .padding(horizontal = 20.dp, vertical = 18.dp),
+                Modifier.fillMaxSize().padding(horizontal = 20.dp, vertical = 18.dp),
             ) {
                 when (page) {
-                    0 -> TodayPage(model, snap, busy) { vm.syncFromMac() }
+                    0 -> TodayPage(model, snap)
                     1 -> SleepPage(model.today?.sleep)
                     2 -> ReadinessPage(model.today?.readiness)
                     3 -> ActivityPage(model.today?.activity)
@@ -112,29 +107,12 @@ fun TrackerPager(
 // ---- pages -------------------------------------------------------------------------------------
 
 @Composable
-private fun TodayPage(
-    model: Tracker.Model,
-    snap: com.gios.brightoura.data.MacSource.Snapshot,
-    busy: Boolean,
-    onRefresh: () -> Unit,
-) {
+private fun TodayPage(model: Tracker.Model, snap: com.gios.brightoura.data.MacSource.Snapshot) {
     val day = model.today
-    Row(
-        Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(
-            day?.let { DOW.format(Instant.ofEpochMilli(dayMs(it.epochDay))) } ?: "Today",
-            style = MaterialTheme.typography.titleLarge, color = Ink.Soft,
-        )
-        Text(
-            if (busy) "UPDATING…" else "↻ REFRESH",
-            style = MaterialTheme.typography.labelLarge,
-            color = if (busy) Ink.Faint else Ink.Soft,
-            modifier = Modifier.clickable(enabled = !busy, onClick = onRefresh),
-        )
-    }
+    HeaderRow(
+        left = day?.let { DOW.format(Instant.ofEpochMilli(dayMs(it.epochDay))) } ?: "Today",
+        right = snap.serial?.let { "OURA" } ?: "",
+    )
     Spacer(Modifier.height(18.dp))
     if (day == null) {
         Empty(
@@ -178,7 +156,6 @@ private fun SleepPage(s: Tracker.Sleep?) {
     Metric("Average HR", s.avgBpm?.let { "$it bpm" })
     Metric("Lowest HR", s.lowestBpm?.let { "$it bpm" +
         (s.lowestAtMs?.let { t -> " · " + HM.format(Instant.ofEpochMilli(t)) } ?: "") })
-    if (s.stages == null) Note("Sleep staging needs frames this ring hasn't sent yet; the window and heart rate above are measured.")
 }
 
 @Composable
@@ -193,7 +170,6 @@ private fun ReadinessPage(r: Tracker.Readiness?) {
     Metric("Body temperature", r.bodyTempDeviation?.let { signed2(it) + " °C" })
     Metric("Resting heart rate", r.restingBpm?.let { "$it bpm" })
     Metric("HRV", r.hrvMs?.let { "$it ms" })
-    Note("BrightOura's own score, computed openly from your measurements — not Oura's number.")
 }
 
 @Composable
@@ -209,7 +185,7 @@ private fun ActivityPage(a: Tracker.Activity?) {
     Metric("Total burn", a.totalKcal?.let { "%,d kcal".format(it) })
     Metric("Distance", "%.1f km".format(a.distanceKm))
     Metric("Worn", hm(a.wornMinutes))
-    Note("Calories and distance are estimated from step count.")
+    Note("Steps are estimated from activity intensity; calories and distance from steps.")
 }
 
 @Composable

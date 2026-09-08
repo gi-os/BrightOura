@@ -164,6 +164,7 @@ object Readings {
         TAG_TEMP, TAG_TEMP_PERIOD, TAG_SLEEP_TEMP -> temp(frame)
         TAG_REAL_STEPS_1, TAG_REAL_STEPS_2 -> steps(frame)
         TAG_WEAR -> wear(frame)
+        TAG_ACTIVITY -> activity(frame)
         else -> listOf(Reading.Unread(frame.ticks, frame.tag, frame.payload.size))
     }
 
@@ -265,11 +266,33 @@ object Readings {
         return listOf(Reading.Wear(frame.ticks, frame.payload[0].toInt() != 0))
     }
 
+    /**
+     * `0x50` activity_information: a state byte, then one MET (metabolic-equivalent) sample per
+     * byte — `b<128 -> b*0.1`, else `12.8+(b-128)*0.2` (the ring's own scaling). The ring does not
+     * report a step count; Oura derives one from a motion model this app does not have. So steps
+     * here are an **estimate** from the MET intensity: a resting minute is no steps, and cadence
+     * rises with MET. Marked inferred so a screen can flag it.
+     */
+    private fun activity(frame: Frame): List<Reading> {
+        if (frame.payload.size < 2) {
+            return listOf(Reading.Unread(frame.ticks, frame.tag, frame.payload.size))
+        }
+        var steps = 0
+        for (i in 1 until frame.payload.size) {
+            val b = frame.payload[i].toInt() and 0xFF
+            val met = if (b < 128) b * 0.1 else 12.8 + (b - 128) * 0.2
+            if (met >= 1.5) steps += (((met - 1.0) * 30).toInt()).coerceIn(0, 130)
+        }
+        return if (steps > 0) listOf(Reading.Steps(frame.ticks, steps, inferred = true))
+        else listOf(Reading.Unread(frame.ticks, frame.tag, frame.payload.size))
+    }
+
     private val PLAUSIBLE_INTERVAL = 300..2_000
     private val PLAUSIBLE_BPM = 25..220
     private val PLAUSIBLE_CELSIUS = 15.0..45.0
     private const val MAX_STEPS_PER_EVENT = 5_000
 
+    const val TAG_ACTIVITY = 0x50
     const val TAG_STATE_CHANGE = 0x45
     const val TAG_TEMP = 0x46
     const val TAG_WEAR = 0x53
