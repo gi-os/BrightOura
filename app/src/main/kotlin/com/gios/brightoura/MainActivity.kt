@@ -17,6 +17,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -154,24 +155,28 @@ class MainActivity : ComponentActivity() {
 
         CompositionLocalProvider(LocalWheelBus provides wheel) {
             val snap = macSnap
-            if (snap != null && snap.error == null) {
-                // Connected: the ring, in six screens. Nothing else on screen.
-                TrackerPager(vm, snap)
-            } else {
-                // Loading (no snapshot yet) shows only DATA; a failed fetch reveals the pairing
-                // fallback, since direct Bluetooth is only worth trying when the Mac is unreachable.
-                val disconnected = snap?.error != null
-                Column(Modifier.fillMaxSize()) {
-                    val labels = if (disconnected) listOf("DATA", "SET UP", "FRAMES") else listOf("DATA")
-                    val idx = tab.coerceIn(0, labels.size - 1)
-                    Column(Modifier.weight(1f)) {
-                        when (labels[idx]) {
-                            "SET UP" -> SetupScreen(vm, onDone = { tab = 0 })
-                            "FRAMES" -> FramesScreen(vm)
-                            else -> MacScreen(vm)
+            var showPairing by remember { mutableStateOf(false) }
+            when {
+                // Opened from Settings — the direct Bluetooth flow, with a way back.
+                showPairing -> SetupScreen(vm, onDone = { showPairing = false })
+                // Connected: the ring, in seven screens (the last is Settings).
+                snap != null && snap.error == null ->
+                    TrackerPager(vm, snap, onOpenPairing = { showPairing = true })
+                // Loading shows only DATA; a failed fetch reveals the pairing fallback.
+                else -> {
+                    val disconnected = snap?.error != null
+                    Column(Modifier.fillMaxSize()) {
+                        val labels = if (disconnected) listOf("DATA", "SET UP", "FRAMES") else listOf("DATA")
+                        val idx = tab.coerceIn(0, labels.size - 1)
+                        Column(Modifier.weight(1f)) {
+                            when (labels[idx]) {
+                                "SET UP" -> SetupScreen(vm, onDone = { tab = 0 })
+                                "FRAMES" -> FramesScreen(vm)
+                                else -> MacScreen(vm)
+                            }
                         }
+                        if (labels.size > 1) TabBar(idx, labels) { tab = it }
                     }
-                    if (labels.size > 1) TabBar(idx, labels) { tab = it }
                 }
             }
         }

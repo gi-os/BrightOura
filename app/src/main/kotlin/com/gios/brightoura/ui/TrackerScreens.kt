@@ -19,11 +19,16 @@ import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.clickable
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -52,9 +57,13 @@ private val HM = DateTimeFormatter.ofPattern("HH:mm").withZone(ZoneId.systemDefa
  * week of Trends.
  */
 @Composable
-fun TrackerPager(vm: RingViewModel, snap: com.gios.brightoura.data.MacSource.Snapshot) {
+fun TrackerPager(
+    vm: RingViewModel,
+    snap: com.gios.brightoura.data.MacSource.Snapshot,
+    onOpenPairing: () -> Unit,
+) {
     val model = snap.model
-    val pages = 6
+    val pages = 7
     val state = rememberPagerState(pageCount = { pages })
     val scope = rememberCoroutineScope()
 
@@ -76,7 +85,8 @@ fun TrackerPager(vm: RingViewModel, snap: com.gios.brightoura.data.MacSource.Sna
                     2 -> ReadinessPage(model.today?.readiness)
                     3 -> ActivityPage(model.today?.activity)
                     4 -> HeartPage(model.today?.heart)
-                    else -> TrendsPage(model.trends)
+                    5 -> TrendsPage(model.trends)
+                    else -> SettingsPage(vm, snap, onOpenPairing)
                 }
             }
         }
@@ -205,6 +215,53 @@ private fun TrendsPage(t: Tracker.Trends?) {
     TrendRow("READINESS", t.readinessAvg, t.readinessByDay)
     TrendRow("SLEEP", t.sleepAvg, t.sleepByDay)
     TrendRow("ACTIVITY", t.activityAvg, t.activityByDay)
+}
+
+@Composable
+private fun SettingsPage(
+    vm: RingViewModel,
+    snap: com.gios.brightoura.data.MacSource.Snapshot,
+    onOpenPairing: () -> Unit,
+) {
+    var url by remember { mutableStateOf(vm.macUrl) }
+    Cap("SETTINGS")
+    Spacer(Modifier.height(14.dp))
+
+    Cap("MAC BRIDGE")
+    Spacer(Modifier.height(4.dp))
+    OutlinedTextField(
+        value = url,
+        onValueChange = { url = it },
+        singleLine = true,
+        modifier = Modifier.fillMaxWidth(),
+    )
+    Spacer(Modifier.height(4.dp))
+    ActionRow("Sync now", "RESYNC") { vm.macUrl = url; vm.syncFromMac() }
+    Divider()
+
+    Cap("RING")
+    Spacer(Modifier.height(6.dp))
+    Metric("Serial", snap.serial ?: "—")
+    Metric("Firmware", snap.firmware ?: "—")
+    Metric("Battery", snap.batteryPercent?.let { "$it%" } ?: "—")
+    Metric("Frames synced", "${snap.frameCount}")
+    Divider()
+
+    ActionRow("Bluetooth pairing", "OPEN") { onOpenPairing() }
+    Note("Direct pairing is only needed if the Mac bridge is unreachable. The ring must be worn " +
+        "(awake) for the Mac to sync it — on a desk it sleeps.")
+}
+
+@Composable
+private fun ActionRow(label: String, action: String, onClick: () -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().clickable(onClick = onClick).padding(vertical = 12.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(label, style = MaterialTheme.typography.bodyLarge, color = Ink.Near)
+        Text(action, style = MaterialTheme.typography.labelLarge, color = Ink.Soft)
+    }
 }
 
 // ---- components --------------------------------------------------------------------------------

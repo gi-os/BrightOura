@@ -17,7 +17,7 @@ import com.gios.brightoura.R
  * for the numbers, small and tracked for the labels. Every hex here is taken from the mockup.
  */
 object Ink {
-    val Bg = Color(0xFF141414)          // panel ground
+    val Bg = Color(0xFF000000)          // panel ground
     val Card = Color(0xFF1C1C1C)        // a raised block
     val Card2 = Color(0xFF232323)       // a second surface
     val Rule = Color(0xFF2B2B2B)        // hairlines, bar tracks
