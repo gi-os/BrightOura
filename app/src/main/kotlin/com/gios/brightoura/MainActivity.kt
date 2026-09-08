@@ -25,6 +25,7 @@ import com.gios.brightoura.ui.FramesScreen
 import com.gios.brightoura.ui.MacScreen
 import com.gios.brightoura.ui.RingViewModel
 import com.gios.brightoura.ui.SetupScreen
+import com.gios.brightoura.ui.TrackerPager
 import com.gios.brightoura.ui.TabBar
 import com.gios.brightoura.ui.theme.BrightOuraTheme
 import com.gios.light.common.hw.LightKey
@@ -101,8 +102,9 @@ class MainActivity : ComponentActivity() {
         // so the Bluetooth tabs appear only while the Mac bridge is unreachable — otherwise this
         // is a one-screen app that shows the ring.
         val macSnap by vm.mac.collectAsStateWithLifecycle()
-        val disconnected = macSnap?.error != null
         var tab by remember { mutableIntStateOf(0) }
+        // Read the ring on launch — it behaves like a live link, not a page you refresh.
+        LaunchedEffect(Unit) { vm.syncFromMac() }
 
         /**
          * Bluetooth's runtime permissions.
@@ -151,17 +153,26 @@ class MainActivity : ComponentActivity() {
         }
 
         CompositionLocalProvider(LocalWheelBus provides wheel) {
-            Column(Modifier.fillMaxSize()) {
-                val labels = if (disconnected) listOf("DATA", "SET UP", "FRAMES") else listOf("DATA")
-                val idx = tab.coerceIn(0, labels.size - 1)
-                Column(Modifier.weight(1f)) {
-                    when (labels[idx]) {
-                        "SET UP" -> SetupScreen(vm, onDone = { tab = 0 })
-                        "FRAMES" -> FramesScreen(vm)
-                        else -> MacScreen(vm)
+            val snap = macSnap
+            if (snap != null && snap.error == null) {
+                // Connected: the ring, in six screens. Nothing else on screen.
+                TrackerPager(vm, snap)
+            } else {
+                // Loading (no snapshot yet) shows only DATA; a failed fetch reveals the pairing
+                // fallback, since direct Bluetooth is only worth trying when the Mac is unreachable.
+                val disconnected = snap?.error != null
+                Column(Modifier.fillMaxSize()) {
+                    val labels = if (disconnected) listOf("DATA", "SET UP", "FRAMES") else listOf("DATA")
+                    val idx = tab.coerceIn(0, labels.size - 1)
+                    Column(Modifier.weight(1f)) {
+                        when (labels[idx]) {
+                            "SET UP" -> SetupScreen(vm, onDone = { tab = 0 })
+                            "FRAMES" -> FramesScreen(vm)
+                            else -> MacScreen(vm)
+                        }
                     }
+                    if (labels.size > 1) TabBar(idx, labels) { tab = it }
                 }
-                if (labels.size > 1) TabBar(idx, labels) { tab = it }
             }
         }
     }

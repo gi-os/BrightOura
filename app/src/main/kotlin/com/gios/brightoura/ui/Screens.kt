@@ -499,18 +499,12 @@ fun FramesScreen(vm: RingViewModel) {
 private val CLOCK = SimpleDateFormat("d MMM HH:mm", Locale.US)
 
 
-private val DAY_FMT = DateTimeFormatter.ofPattern("EEE d MMM", Locale.US)
-
 /**
- * The ring's data — the app's real face.
+ * The connection screen — shown only while the Mac bridge cannot be reached.
  *
- * The ring will not pair over Bluetooth on this phone, so a Mac on the network holds it and serves
- * its synced history; this reads that and shows what the ring measured, decoded by the same code
- * the Bluetooth path used. It behaves like a live link to the ring: it reads on its own when the
- * screen opens, so there is nothing to press. Pairing lives elsewhere and only appears when this
- * cannot reach the Mac — see [MainActivity].
- *
- * No invented scores: measurement only, the same principle as everywhere else here.
+ * When the bridge answers, the app shows the ring itself (see TrackerPager); this is the fallback:
+ * what went wrong, a field to fix the address, and a pointer at direct Bluetooth pairing, which is
+ * only worth trying when the Mac is genuinely unreachable.
  */
 @Composable
 fun MacScreen(vm: RingViewModel) {
@@ -521,38 +515,25 @@ fun MacScreen(vm: RingViewModel) {
     val listState = rememberLazyListState()
     WheelScroll(listState)
 
-    // Read on arrival. The whole point is that it feels like the ring is connected, not like a
-    // page you have to refresh — so opening the screen reads it, every time.
-    LaunchedEffect(Unit) { vm.syncFromMac() }
-
     val s = snap
-    val connected = s != null && s.error == null
-
     LazyColumn(Modifier.fillMaxSize(), state = listState) {
         item {
             MenuRow(
-                label = s?.serial ?: "Oura ring",
+                label = "Oura ring",
                 sub = when {
-                    busy && s == null -> "Reading from the Mac…"
-                    s?.error != null -> "Not connected"
-                    s?.firmware != null -> "Firmware ${s.firmware}"
-                    else -> "Reading…"
+                    s == null -> "Reading from the Mac…"
+                    s.error != null -> "Not connected"
+                    else -> "Connected"
                 },
-                detail = when {
-                    busy -> "…"
-                    connected -> s?.batteryPercent?.let { "$it%" } ?: "SYNCED"
-                    else -> "RETRY"
-                },
+                detail = if (busy) "…" else "RETRY",
                 onClick = { vm.macUrl = url; vm.syncFromMac() },
             )
             Rule()
         }
-
         when {
             s == null -> item {
                 EmptyState(if (busy) "Reading the ring from the Mac…" else "Reading…")
             }
-
             s.error != null -> item {
                 EmptyState(s.error!!)
                 SectionLabel("MAC BRIDGE")
@@ -570,74 +551,14 @@ fun MacScreen(vm: RingViewModel) {
                     onClick = { vm.macUrl = url; vm.syncFromMac() },
                 )
                 Text(
-                    text = "The ring will not pair over Bluetooth on this phone. If you want to " +
-                        "try the direct link anyway, the SET UP tab appears while the Mac is " +
-                        "unreachable.",
+                    text = "The ring will not pair over Bluetooth on this phone. If the Mac stays " +
+                        "unreachable, the SET UP tab can try the direct link anyway.",
                     style = MaterialTheme.typography.bodySmall,
                     color = Dim,
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
                 )
                 Rule()
             }
-
-            s.days.isEmpty() -> item {
-                EmptyState(
-                    if (s.frameCount == 0) {
-                        "Connected. No ring history yet — wear the ring near the Mac and let it sync."
-                    } else {
-                        "${s.frameCount} frames so far, nothing summarisable yet. Keep wearing it."
-                    },
-                )
-            }
-
-            else -> {
-                if (s.approximate) {
-                    item {
-                        Text(
-                            text = "Day boundaries are approximate until the ring reports its own " +
-                                "time — they may shift by a few hours.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = Dim,
-                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
-                        )
-                    }
-                }
-                item { SectionLabel("BY DAY") }
-                items(s.days) { day -> DayCard(day) }
-            }
         }
-    }
-}
-
-/** One day's measurements, laid out as label/figure rows. */
-@Composable
-private fun DayCard(day: Day.Summary) {
-    Text(
-        text = LocalDate.ofEpochDay(day.day).format(DAY_FMT),
-        style = MaterialTheme.typography.bodyLarge,
-        modifier = Modifier.padding(start = 16.dp, top = 12.dp, bottom = 2.dp),
-    )
-    Stat("Resting heart rate", day.restingBpm?.let { "$it bpm" })
-    Stat("Lowest / highest", listOfNotNull(day.lowestBpm, day.highestBpm)
-        .takeIf { it.size == 2 }?.let { "${it[0]} / ${it[1]} bpm" })
-    Stat("HRV (RMSSD)", day.averageRmssdMs?.let { "$it ms" })
-    Stat("Temperature", day.tempDeviation?.let {
-        val sign = if (it >= 0) "+" else ""
-        "$sign%.2f \u00b0C from normal".format(it)
-    })
-    Stat("Steps", day.steps.takeIf { it > 0 }?.let { "%,d".format(it) })
-    Stat("Worn", day.wornMinutes.takeIf { it > 0 }?.let { "${it / 60}h ${it % 60}m" })
-    Stat("Frames read", "${day.readings}" + if (day.unread > 0) " (+${day.unread} unread)" else "")
-    Rule()
-}
-
-@Composable
-private fun Stat(label: String, value: String?) {
-    Row(
-        Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 5.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(label, style = MaterialTheme.typography.bodyMedium, color = Dim, modifier = Modifier.weight(1f))
-        Text(value ?: "\u2014", style = MaterialTheme.typography.bodyMedium)
     }
 }

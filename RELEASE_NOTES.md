@@ -1,14 +1,23 @@
-## BrightOura v1.1 — it just shows the ring
+## BrightOura v1.2 — the tracker
 
-v1.0 added the Mac bridge; v1.1 makes it feel like the app is simply connected to the ring.
+BrightOura now looks like what it is: a ring tracker. Six screens, a wheel-turn or a swipe apart,
+in a monochrome Oura idiom built for the Light Phone's panel.
 
-- **Opens straight to the data and reads on its own.** No SYNC button to remember — opening the
-  app reads the ring from the Mac, the way a directly-connected app would.
-- **The data is the app.** The ring's measurements are the whole screen now. The Bluetooth pairing
-  tabs are gone from view — they only reappear if the Mac bridge cannot be reached, which is the
-  only time direct pairing is worth trying.
-- **Fixes "Cleartext HTTP not permitted."** The bridge is a plain-HTTP service on your own network,
-  which Android blocks by default; the app now allows it.
+- **Today** — Readiness, Sleep, and Activity at a glance, with the ring's battery.
+- **Sleep** — the night's window, time asleep, efficiency, and overnight heart rate.
+- **Readiness** — its contributors (resting heart rate, HRV, body-temperature drift), broken out.
+- **Activity** — steps against a goal, with estimated calories and distance.
+- **Heart** — resting and average HRV, the night's heart-rate line, and HRV against your baseline.
+- **Trends** — the week, by score and by day.
 
-Everything the ring measured — heart rate, HRV, temperature from your own baseline, steps, worn
-hours — by day, decoded on the phone. Still no invented scores.
+Everything opens straight to the data and reads on its own.
+
+**About the scores.** The 0–100 Readiness / Sleep / Activity numbers are **BrightOura's own**,
+computed openly from the ring's real measurements — resting heart rate and HRV against your recent
+baseline, temperature drift, how long and how well you slept, steps against a goal. They track the
+same signals Oura's do and move the same way, but they are not Oura's numbers and won't match them
+to the point. Every raw measurement — a heart rate, a temperature, a step count — is exactly what
+the ring reported. Sleep staging waits on frames this ring hasn't sent yet; the sleep window and
+heart rate are measured.
+
+Set in Space Grotesk. Reads the ring from the Mac bridge, the same as before.

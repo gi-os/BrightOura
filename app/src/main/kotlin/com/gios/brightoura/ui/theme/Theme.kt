@@ -4,39 +4,41 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.remember
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
-import com.gios.light.common.theme.akkuratFamilyOrDefault
 
-/** LightOS renders greyscale on a matte panel, so the palette is luminance only. */
+/**
+ * The monochrome Oura theme. Ground is #141414, text is the grey ramp, and the whole thing is
+ * Space Grotesk — light and large for the numbers a glance is for, small and tracked for labels.
+ * The named type scale mirrors the mockup's sizes (11 → 88).
+ */
 private val MonoDark = darkColorScheme(
-    primary = Color.White, onPrimary = Color.Black,
-    background = Color.Black, onBackground = Color.White,
-    surface = Color.Black, onSurface = Color.White,
-    surfaceVariant = Color(0xFF1A1A1A), onSurfaceVariant = Color(0xFFBBBBBB),
+    primary = Ink.White, onPrimary = Ink.Bg,
+    background = Ink.Bg, onBackground = Ink.Near,
+    surface = Ink.Card, onSurface = Ink.Near,
+    surfaceVariant = Ink.Card2, onSurfaceVariant = Ink.Soft,
+    outline = Ink.Rule,
 )
 
 @Composable
 fun BrightOuraTheme(content: @Composable () -> Unit) {
-    val fam = remember { akkuratFamilyOrDefault() }
     val type = Typography(
-        // The one instruction on screen while walking; readable at arm's length.
-        displayLarge = TextStyle(fontFamily = fam, fontSize = 64.sp, fontWeight = FontWeight.Light),
-        displaySmall = TextStyle(fontFamily = fam, fontSize = 44.sp, fontWeight = FontWeight.Light),
-        titleLarge = TextStyle(fontFamily = fam, fontSize = 26.sp, fontWeight = FontWeight.Light),
-        titleMedium = TextStyle(fontFamily = fam, fontSize = 21.sp, fontWeight = FontWeight.Normal),
-        bodyLarge = TextStyle(fontFamily = fam, fontSize = 18.sp, fontWeight = FontWeight.Normal),
-        bodyMedium = TextStyle(fontFamily = fam, fontSize = 15.sp, fontWeight = FontWeight.Normal),
+        // Hero score — light and huge, the one number a glance reads.
+        displayLarge = TextStyle(fontFamily = SpaceGrotesk, fontSize = 88.sp, fontWeight = FontWeight.Normal),
+        displayMedium = TextStyle(fontFamily = SpaceGrotesk, fontSize = 62.sp, fontWeight = FontWeight.Normal),
+        displaySmall = TextStyle(fontFamily = SpaceGrotesk, fontSize = 34.sp, fontWeight = FontWeight.Normal),
+        headlineMedium = TextStyle(fontFamily = SpaceGrotesk, fontSize = 22.sp, fontWeight = FontWeight.Medium),
+        titleLarge = TextStyle(fontFamily = SpaceGrotesk, fontSize = 17.sp, fontWeight = FontWeight.Medium),
+        titleMedium = TextStyle(fontFamily = SpaceGrotesk, fontSize = 15.sp, fontWeight = FontWeight.Medium),
+        bodyLarge = TextStyle(fontFamily = SpaceGrotesk, fontSize = 15.sp, fontWeight = FontWeight.Normal),
+        bodyMedium = TextStyle(fontFamily = SpaceGrotesk, fontSize = 14.sp, fontWeight = FontWeight.Normal),
+        bodySmall = TextStyle(fontFamily = SpaceGrotesk, fontSize = 13.sp, fontWeight = FontWeight.Normal),
         labelLarge = TextStyle(
-            fontFamily = fam, fontSize = 16.sp, fontWeight = FontWeight.Medium,
-            letterSpacing = 2.4.sp,
+            fontFamily = SpaceGrotesk, fontSize = 12.sp, fontWeight = FontWeight.Medium, letterSpacing = 1.8.sp,
         ),
         labelSmall = TextStyle(
-            fontFamily = fam, fontSize = 12.sp, fontWeight = FontWeight.Medium,
-            letterSpacing = 1.5.sp,
+            fontFamily = SpaceGrotesk, fontSize = 11.sp, fontWeight = FontWeight.Medium, letterSpacing = 1.6.sp,
         ),
     )
     MaterialTheme(colorScheme = MonoDark, typography = type, content = content)

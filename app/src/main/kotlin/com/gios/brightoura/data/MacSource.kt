@@ -3,8 +3,6 @@ package com.gios.brightoura.data
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
-import java.time.Instant
-import java.time.ZoneId
 
 /**
  * Reading the ring's data off the Mac bridge instead of off the ring.
@@ -27,7 +25,7 @@ object MacSource {
         val serial: String?,
         val firmware: String?,
         val batteryPercent: Int?,
-        val days: List<Day.Summary>,
+        val model: Tracker.Model,
         val frameCount: Int,
         /** True when the day boundaries were derived from capture time, not a ring time-sync. */
         val approximate: Boolean,
@@ -35,7 +33,7 @@ object MacSource {
     ) {
         companion object {
             fun failed(message: String) =
-                Snapshot(null, null, null, emptyList(), 0, false, message)
+                Snapshot(null, null, null, Tracker.Model(emptyList(), null), 0, false, message)
         }
     }
 
@@ -64,7 +62,7 @@ object MacSource {
 
         val framesJson = json.optJSONArray("frames")
         if (framesJson == null || framesJson.length() == 0) {
-            return Snapshot(serial, firmware, battery, emptyList(), 0, false, null)
+            return Snapshot(serial, firmware, battery, Tracker.Model(emptyList(), null), 0, false, null)
         }
 
         val frames = ArrayList<Readings.Frame>(framesJson.length())
@@ -87,19 +85,8 @@ object MacSource {
         val approximate = clockJson?.optBoolean("approximate", false) ?: true
 
         val readings = frames.flatMap { Readings.read(it) }
-        val baseline = Day.baseline(
-            readings.filterIsInstance<Readings.Reading.Temp>().map { it.celsius },
-        )
-        val zone = ZoneId.systemDefault()
-        val byDay = readings.groupBy { r ->
-            Instant.ofEpochMilli(clock.epochMs(r.ticks)).atZone(zone).toLocalDate().toEpochDay()
-        }
-        val days = byDay
-            .map { (day, rs) -> Day.summarise(day, rs, clock, baseline) }
-            .filter { it.hasAnything }
-            .sortedByDescending { it.day }
-
-        return Snapshot(serial, firmware, battery, days, frames.size, approximate, null)
+        val model = Tracker.build(readings, clock)
+        return Snapshot(serial, firmware, battery, model, frames.size, approximate, null)
     }
 
     private fun get(spec: String): String {
