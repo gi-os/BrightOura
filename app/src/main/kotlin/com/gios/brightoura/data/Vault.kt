@@ -83,6 +83,17 @@ class Vault(context: Context) {
         get() = prefs.getLong(LAST_SYNC, 0L)
         set(v) { prefs.edit().putLong(LAST_SYNC, v).apply() }
 
+    /**
+     * The Mac bridge's base URL, e.g. `http://192.168.68.97:8099`.
+     *
+     * The ring will not pair over Bluetooth on this phone, so its data is read from a Mac on the
+     * network that holds the ring and serves the synced history as JSON. Defaulted to the home
+     * Mac mini's LAN address; changeable on the DATA screen.
+     */
+    var macUrl: String
+        get() = prefs.getString(MAC_URL, DEFAULT_MAC_URL) ?: DEFAULT_MAC_URL
+        set(v) { prefs.edit().putString(MAC_URL, v.trim()).apply() }
+
     private fun wrapper(): SecretKey {
         val store = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
         (store.getEntry(ALIAS, null) as? KeyStore.SecretKeyEntry)?.let { return it.secretKey }
@@ -112,5 +123,7 @@ class Vault(context: Context) {
         const val NAME = "ringName"
         const val CURSOR = "cursorDeciseconds"
         const val LAST_SYNC = "lastSyncMs"
+        const val MAC_URL = "macUrl"
+        const val DEFAULT_MAC_URL = "http://192.168.68.97:8099"
     }
 }

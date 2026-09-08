@@ -1,35 +1,31 @@
-## BrightOura v0.30 — why the bond collapsed, in words
+## BrightOura v1.0 — the ring's data, on the phone at last
 
-```
-setPairingConfirmation true
-state NONE
-RESULT refused after confirming
-```
+For every release until now this app could find the ring, adopt it, and drain its history — but only
+if the ring would pair over Bluetooth, and on the Light Phone III it never would. Its pairing
+handshake stalls LightOS's Bluetooth stack every time (proven again on a factory-reset ring: 30
+seconds in `BONDING`, then gone). That wall does not move from inside an app.
 
-The confirmation went through and the bond then fell apart. That was an honest answer to the wrong
-question: *why* it fell apart is carried on the bond-state broadcast as `EXTRA_REASON`, a number this
-helper had never asked for. The state read back afterwards is a bare NONE, which is why "refused
-after confirming" was the end of the story instead of the start of one.
+So this release stops trying to climb it. A Mac on your network holds the ring instead — it pairs
+where the phone cannot — and serves the ring's synced history to the phone over the network. The
+phone decodes and shows it with the same code the Bluetooth path used, so nothing about the numbers
+changed; only where they come from did.
 
-The reasons point in completely different directions:
+**New: the DATA tab.**
 
-| reason | what it means |
-|---|---|
-| authentication failed | the keys did not match |
-| the ring rejected it | it does not want to pair with this phone |
-| the ring went away | out of range, asleep, or busy with another phone |
-| authentication timed out | nobody answered in time |
-| **too many failed attempts** | **the stack is refusing for now** |
+- Point it at the Mac bridge (defaults to the home Mac mini, editable on the screen).
+- **SYNC** pulls the ring's history the Mac has drained and decodes it here — heart rate, HRV, skin
+  temperature away from your own baseline, steps, and the hours the ring believed it was worn,
+  broken out by day.
+- Battery and firmware, read the same way.
 
-Only the last one has a remedy, and after a dozen-plus attempts tonight it is the one I would bet on.
-When it appears, the helper says what to do rather than leaving it to be guessed:
+Still deliberately no invented scores: this shows what the ring measured, not a model's guess at a
+number Oura computes elsewhere.
 
-```
-the stack is refusing because too many pairings have failed recently. Switch
-Bluetooth off and on — that clears the count — and leave it a minute before
-trying again.
-```
+The Bluetooth tabs (RING, SET UP, FRAMES) are unchanged and still there — the direct path remains
+for any phone whose stack can complete the pairing.
 
-**And the transcript no longer ends on "Killed".** Every one so far has, which reads like a crash and
-was only this process declining to exit while a framework thread was still up. It says `done` and
-exits, so the last line of a transcript is the answer rather than an alarm.
+### Setting up the bridge
+
+The Mac runs `open_oura` (bonded to the ring) plus a small read-only JSON server; the phone reaches
+it over your LAN or Tailscale. The server address goes in the DATA tab. Full setup notes ship with
+the bridge.

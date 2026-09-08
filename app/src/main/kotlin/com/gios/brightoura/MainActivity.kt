@@ -22,6 +22,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.gios.brightoura.ui.FramesScreen
+import com.gios.brightoura.ui.MacScreen
 import com.gios.brightoura.ui.RingViewModel
 import com.gios.brightoura.ui.SetupScreen
 import com.gios.brightoura.ui.TabBar
@@ -151,10 +152,11 @@ class MainActivity : ComponentActivity() {
                     when (tab) {
                         0 -> TodayScreen(vm, onSetup = { tab = 1 })
                         1 -> SetupScreen(vm, onDone = { tab = 0 })
-                        else -> FramesScreen(vm)
+                        2 -> FramesScreen(vm)
+                        else -> MacScreen(vm)
                     }
                 }
-                TabBar(tab, listOf("RING", "SET UP", "FRAMES")) { tab = it }
+                TabBar(tab, listOf("RING", "SETUP", "FRAMES", "DATA")) { tab = it }
             }
         }
     }

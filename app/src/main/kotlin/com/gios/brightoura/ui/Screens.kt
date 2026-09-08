@@ -7,7 +7,14 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Row
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -19,6 +26,9 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.gios.light.common.hw.WheelScroll
 import com.gios.light.common.theme.Dim
+import com.gios.brightoura.data.Day
+import java.time.LocalDate
+import java.time.format.DateTimeFormatter
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -487,3 +497,142 @@ fun FramesScreen(vm: RingViewModel) {
 }
 
 private val CLOCK = SimpleDateFormat("d MMM HH:mm", Locale.US)
+
+
+private val DAY_FMT = DateTimeFormatter.ofPattern("EEE d MMM", Locale.US)
+
+/**
+ * The ring's data, read from the Mac bridge.
+ *
+ * This is the screen that finally shows numbers. The ring will not pair over Bluetooth on this
+ * phone, so a Mac on the network holds it (open_oura, bonded) and serves the synced history; this
+ * fetches that and shows what the ring measured, decoded by the same code the BLE path would use.
+ * No scores — measurement only, the same principle as everywhere else here: beats, degrees away
+ * from your own normal, steps, and the hours the ring believed it was worn.
+ */
+@Composable
+fun MacScreen(vm: RingViewModel) {
+    val busy by vm.busy.collectAsStateWithLifecycle()
+    val said by vm.said.collectAsStateWithLifecycle()
+    val snap by vm.mac.collectAsStateWithLifecycle()
+
+    var url by remember { mutableStateOf(vm.macUrl) }
+
+    val listState = rememberLazyListState()
+    WheelScroll(listState)
+
+    LazyColumn(Modifier.fillMaxSize(), state = listState) {
+        item {
+            SectionLabel("MAC BRIDGE")
+            MenuRow(
+                label = "Read the ring from the Mac",
+                detail = if (busy) "…" else "SYNC",
+                sub = "Pulls the history the Mac has drained off the ring, and decodes it here.",
+                onClick = {
+                    vm.macUrl = url
+                    vm.syncFromMac()
+                },
+            )
+            OutlinedTextField(
+                value = url,
+                onValueChange = { url = it },
+                label = { Text("Mac address") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+            )
+            Text(
+                text = "The bridge's address on your network, e.g. http://192.168.68.97:8099.",
+                style = MaterialTheme.typography.bodySmall,
+                color = Dim,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 2.dp),
+            )
+            Rule()
+        }
+
+        val s = snap
+        if (s == null) {
+            item { EmptyState("Not read yet. Tap SYNC.") }
+        } else if (s.error != null) {
+            item { EmptyState(s.error!!) }
+        } else {
+            item {
+                SectionLabel("RING")
+                MenuRow(
+                    label = s.serial ?: "Unknown ring",
+                    sub = s.firmware?.let { "Firmware $it" } ?: "On the Mac",
+                    detail = s.batteryPercent?.let { "$it%" },
+                )
+                if (s.approximate && s.days.isNotEmpty()) {
+                    Text(
+                        text = "Day boundaries are approximate until the ring reports its own " +
+                            "time — they may shift by a few hours.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Dim,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                    )
+                }
+                Rule()
+            }
+
+            if (s.days.isEmpty()) {
+                item {
+                    EmptyState(
+                        if (s.frameCount == 0) {
+                            "The Mac has no history yet. Wear the ring near the Mac and let it sync."
+                        } else {
+                            "${s.frameCount} frames so far, nothing summarisable yet. Keep wearing it."
+                        },
+                    )
+                }
+            } else {
+                item { SectionLabel("BY DAY") }
+                items(s.days) { day -> DayCard(day) }
+            }
+        }
+
+        item {
+            said?.let { line ->
+                Rule()
+                Text(
+                    text = line,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = Dim,
+                    modifier = Modifier.fillMaxWidth().padding(16.dp),
+                )
+            }
+        }
+    }
+}
+
+/** One day's measurements, laid out as label/figure rows. */
+@Composable
+private fun DayCard(day: Day.Summary) {
+    Text(
+        text = LocalDate.ofEpochDay(day.day).format(DAY_FMT),
+        style = MaterialTheme.typography.bodyLarge,
+        modifier = Modifier.padding(start = 16.dp, top = 12.dp, bottom = 2.dp),
+    )
+    Stat("Resting heart rate", day.restingBpm?.let { "$it bpm" })
+    Stat("Lowest / highest", listOfNotNull(day.lowestBpm, day.highestBpm)
+        .takeIf { it.size == 2 }?.let { "${it[0]} / ${it[1]} bpm" })
+    Stat("HRV (RMSSD)", day.averageRmssdMs?.let { "$it ms" })
+    Stat("Temperature", day.tempDeviation?.let {
+        val sign = if (it >= 0) "+" else ""
+        "$sign%.2f °C from normal".format(it)
+    })
+    Stat("Steps", day.steps.takeIf { it > 0 }?.let { "%,d".format(it) })
+    Stat("Worn", day.wornMinutes.takeIf { it > 0 }?.let { "${it / 60}h ${it % 60}m" })
+    Stat("Frames read", "${day.readings}" + if (day.unread > 0) " (+${day.unread} unread)" else "")
+    Rule()
+}
+
+@Composable
+private fun Stat(label: String, value: String?) {
+    Row(
+        Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 5.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(label, style = MaterialTheme.typography.bodyMedium, color = Dim, modifier = Modifier.weight(1f))
+        Text(value ?: "—", style = MaterialTheme.typography.bodyMedium)
+    }
+}

@@ -9,6 +9,7 @@ import com.gios.brightoura.ble.Session
 import com.gios.brightoura.ble.Sync
 import com.gios.brightoura.data.EventLog
 import com.gios.brightoura.data.Failures
+import com.gios.brightoura.data.MacSource
 import com.gios.brightoura.data.Trace
 import com.gios.brightoura.data.Vault
 import kotlinx.coroutines.Dispatchers
@@ -60,6 +61,14 @@ class RingViewModel(app: Application) : AndroidViewModel(app) {
 
     private val _counts = MutableStateFlow(log.counts())
     val counts: StateFlow<EventLog.Counts> = _counts.asStateFlow()
+
+    /** The last thing the Mac bridge returned — day summaries decoded from the ring's history. */
+    private val _mac = MutableStateFlow<MacSource.Snapshot?>(null)
+    val mac: StateFlow<MacSource.Snapshot?> = _mac.asStateFlow()
+
+    var macUrl: String
+        get() = vault.macUrl
+        set(v) { vault.macUrl = v }
 
     val paired: Boolean get() = vault.key() != null
     val ringName: String? get() = vault.name
@@ -602,6 +611,32 @@ class RingViewModel(app: Application) : AndroidViewModel(app) {
         log.clear()
         refreshCounts()
         say("Log cleared. The ring's own buffer is untouched.")
+    }
+
+    /**
+     * Pull the ring's data from the Mac bridge and decode it into day summaries.
+     *
+     * The ring never pairs over Bluetooth here, so this is the path that actually shows numbers: a
+     * Mac on the network holds the ring and serves its synced history, and [MacSource] runs it back
+     * through the same decoders the BLE sync would have. A whole fetch each time — there is little
+     * of it and it is simpler to be right than a cursor across two machines.
+     */
+    fun syncFromMac() = work("read the ring from the Mac") {
+        step("Asking ${vault.macUrl}")
+        val snap = withContext(Dispatchers.IO) { MacSource.fetch(vault.macUrl) }
+        _mac.value = snap
+        say(
+            when {
+                snap.error != null -> snap.error
+                snap.frameCount == 0 ->
+                    "Connected. The Mac has no ring history yet — wear the ring near it and let it sync."
+                snap.days.isEmpty() ->
+                    "${snap.frameCount} frames, nothing summarisable yet. More arrives as the ring is worn."
+                else -> "${snap.days.size} day${if (snap.days.size == 1) "" else "s"} from ${snap.frameCount} frames" +
+                    (snap.batteryPercent?.let { " · battery $it%" } ?: "")
+            },
+        )
+        if (snap.error != null) fail("read the ring from the Mac", snap.error)
     }
 
     /**
