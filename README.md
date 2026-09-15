@@ -7,6 +7,8 @@
 
 ## What it is
 
+[**⬇ Download the latest APK**](https://github.com/gi-os/BrightOura/releases/latest) · free, open source.
+
 The ring measures continuously and hands everything to Oura's phone app, which uploads it. On a
 phone with no Oura app — this one — a ring is jewellery. But the ring's own Bluetooth protocol has
 been reverse-engineered, and it turns out the ring gives up almost everything on request.
