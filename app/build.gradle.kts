@@ -1,38 +1,7 @@
-import java.util.Properties
-
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
-}
-
-/**
- * The key shake-to-report posts issues with. Never in the repository: `local.properties` is
- * ignored by git, and CI hands it in from a repository secret. An empty string is a working
- * build — reports queue on the phone and go out from a later one that has the key.
- */
-val reportToken: String = run {
-    val local = rootProject.file("local.properties")
-    val fromFile = if (local.exists()) {
-        Properties().apply { local.inputStream().use { load(it) } }.getProperty("reportToken")
-    } else {
-        null
-    }
-    fromFile ?: System.getenv("REPORT_TOKEN") ?: ""
-}
-
-// An empty token compiles and runs, which is exactly the problem: shake-to-report
-// queues every report on the phone and waits for a build that has the key, and if no
-// build ever has one it waits forever without saying so. This repository has no
-// REPORT_TOKEN secret, so every release shipped so far is that build. Say it out loud
-// on a release build rather than letting it stay silent.
-if (reportToken.isEmpty() &&
-    gradle.startParameter.taskNames.any { it.contains("Release", ignoreCase = true) }
-) {
-    logger.warn(
-        "BrightOura: REPORT_TOKEN is empty. Shake-to-report will queue reports on the " +
-            "phone and never post them. Set the REPORT_TOKEN repository secret."
-    )
 }
 
 android {
@@ -48,7 +17,6 @@ android {
         versionCode = 1
         versionName = "1.6.0"
 
-        buildConfigField("String", "REPORT_TOKEN", "\"$reportToken\"")
         buildConfigField("String", "REPORT_REPO", "\"gi-os/light-reports\"")
 
         // The LPIII is arm64 only.

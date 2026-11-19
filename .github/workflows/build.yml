@@ -40,17 +40,6 @@ jobs:
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           grep -E 'versionCode|versionName' app/build.gradle.kts
 
-      # Absent, reports queue on the phone forever and nothing anywhere says so. This
-      # repository has no REPORT_TOKEN secret today, so the annotation is the only
-      # signal that shake-to-report is shipping dead. Set the secret to silence it.
-      - name: Warn when the report token is missing
-        env:
-          REPORT_TOKEN: ${{ secrets.REPORT_TOKEN }}
-        run: |
-          if [ -z "$REPORT_TOKEN" ]; then
-            echo '::warning::REPORT_TOKEN is not set, so shake-to-report will queue reports on the phone and never post them. Set the REPORT_TOKEN repository secret.'
-          fi
-
       # The signing key is a secret, not a file in the repo. Written here and nowhere
       # else; the path is gitignored so a local checkout cannot commit it back.
       - name: Restore signing keystore
@@ -65,9 +54,6 @@ jobs:
       - name: Build APKs
         run: ./gradlew :app:assembleDebug :app:assembleRelease --stacktrace
         env:
-          # Shake-to-report posts issues with this. Absent, the build still works —
-          # reports queue on the phone until a build that has the key installs over it.
-          REPORT_TOKEN: ${{ secrets.REPORT_TOKEN }}
           # Unlocks the keystore restored above. Without it the release build is
           # unsigned and the fingerprint check below stops the release.
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
