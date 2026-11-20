@@ -69,7 +69,7 @@ android {
 
 dependencies {
     // Shake-to-report, the wheel, and the shared type/greys.
-    implementation("com.gios:light-common:1.2.2")
+    implementation("com.gios:light-common:1.11.0")
 
     val composeBom = platform("androidx.compose:compose-bom:2024.12.01")
     implementation(composeBom)
