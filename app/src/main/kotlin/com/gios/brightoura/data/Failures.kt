@@ -1,10 +1,13 @@
 package com.gios.brightoura.data
 
 import android.content.Context
+import com.gios.light.common.report.Draft
 import com.gios.light.common.report.Failure
+import com.gios.light.common.report.Kind
 import com.gios.light.common.report.Reports
 import com.gios.light.common.report.Symptom
 import com.gios.light.common.report.Trouble
+import com.gios.light.common.report.Wish
 
 /**
  * Filing a failure without asking, because this one is worth having.
@@ -40,8 +43,14 @@ object Failures {
         lastFiled[step] = now
         val report = Reports.compose(
             context = context,
-            symptom = Symptom.Other,
-            note = "ring: could not $step",
+            draft = Draft(
+                kind = Kind.Bug,
+                symptom = Symptom.Other,
+                wish = Wish.Other,
+                note = "ring: could not $step",
+                phone = "",
+                includeShot = false,
+            ),
             screen = "ring",
             crash = null,
             failure = Failure(what = step, detail = buildString {
