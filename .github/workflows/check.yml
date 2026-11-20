@@ -41,8 +41,6 @@ jobs:
           # has to be handed in. GPR_TOKEN takes precedence if a cross-repo PAT is ever needed:
           # a repo-scoped GITHUB_TOKEN's read access to another repository's package is not
           # guaranteed under a personal account.
-          GPR_USER: ${{ secrets.GPR_USER }}
-          GPR_TOKEN: ${{ secrets.GPR_TOKEN }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Compile
@@ -58,8 +56,6 @@ jobs:
           # has to be handed in. GPR_TOKEN takes precedence if a cross-repo PAT is ever needed:
           # a repo-scoped GITHUB_TOKEN's read access to another repository's package is not
           # guaranteed under a personal account.
-          GPR_USER: ${{ secrets.GPR_USER }}
-          GPR_TOKEN: ${{ secrets.GPR_TOKEN }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Upload APK
